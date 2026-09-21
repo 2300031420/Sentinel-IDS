@@ -1,23 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { io } from "socket.io-client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation"; import { io } from "socket.io-client";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
-
-// Two-typeface system: a clean grotesk for structure/copy, and a true
-// monospace for anything that reads like a log line (IPs, paths, IDs,
-// timestamps). The mono face is doing real work here, not decoration —
-// it's how this data is read in every packet-inspection tool it echoes.
+import AnalyticsDashboard from "./components/analytics/AnalyticsDashboard";
+;
 const sans = IBM_Plex_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "600"],
   variable: "--font-sans",
 });
+
 const mono = IBM_Plex_Mono({
   subsets: ["latin"],
   weight: ["400", "500", "600"],
   variable: "--font-mono",
 });
+
+type Detection = {
+  detected: boolean;
+  type: string;
+  severity: string;
+  score: number;
+  description: string;
+  evidence: string;
+};
 
 type Alert = {
   alert_id: string;
@@ -27,257 +34,417 @@ type Alert = {
   channel: string;
   status: string;
   message: string;
-
   sourceIp: string | null;
   method: string | null;
   path: string | null;
   threatScore: number | null;
-
   created_at: string;
   sent_at: string | null;
   acknowledged_at: string | null;
   updated_at: string;
+  detections?: Detection[];
+};
+
+type Pagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 };
 
 type AlertsResponse = {
   success: boolean;
   count: number;
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-  filters: {
-    severity: string | null;
-    status: string | null;
-  };
+  pagination: Pagination;
   alerts: Alert[];
 };
 
-const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
 
-const SEVERITY_STYLES: Record<
+const severityConfig: Record<
   string,
-  { label: string; text: string; dot: string; bar: string; ring: string }
+  {
+    label: string;
+    text: string;
+    bg: string;
+    border: string;
+    dot: string;
+  }
 > = {
   CRITICAL: {
     label: "Critical",
     text: "text-red-400",
+    bg: "bg-red-500/10",
+    border: "border-red-500/20",
     dot: "bg-red-500",
-    bar: "bg-red-500",
-    ring: "ring-red-500/30",
   },
   HIGH: {
     label: "High",
     text: "text-orange-400",
+    bg: "bg-orange-500/10",
+    border: "border-orange-500/20",
     dot: "bg-orange-500",
-    bar: "bg-orange-500",
-    ring: "ring-orange-500/30",
   },
   MEDIUM: {
     label: "Medium",
     text: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/20",
     dot: "bg-amber-400",
-    bar: "bg-amber-400",
-    ring: "ring-amber-400/30",
   },
   LOW: {
     label: "Low",
     text: "text-sky-400",
+    bg: "bg-sky-500/10",
+    border: "border-sky-500/20",
     dot: "bg-sky-500",
-    bar: "bg-sky-500",
-    ring: "ring-sky-500/30",
   },
 };
 
-const FALLBACK_STYLE = {
-  label: "Info",
-  text: "text-slate-400",
-  dot: "bg-slate-500",
-  bar: "bg-slate-500",
-  ring: "ring-slate-500/30",
-};
-
-function severityStyle(severity: string) {
-  return SEVERITY_STYLES[severity] ?? FALLBACK_STYLE;
+function getSeverity(severity: string) {
+  return (
+    severityConfig[severity] ?? {
+      label: severity,
+      text: "text-slate-400",
+      bg: "bg-slate-500/10",
+      border: "border-slate-500/20",
+      dot: "bg-slate-500",
+    }
+  );
 }
 
-function formatTimestamp(iso: string) {
-  const d = new Date(iso);
-  return {
-    date: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-    time: d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
-  };
+function formatTime(timestamp: string) {
+  const date = new Date(timestamp);
+
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatDate(timestamp: string) {
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 export default function Dashboard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [pagination, setPagination] = useState<Pagination | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [activeFilter, setActiveFilter] = useState<string>("ALL");
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [activeFilter, setActiveFilter] = useState("ALL");
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const router = useRouter();
+  const [authChecked, setAuthChecked] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    const fetchAlerts = async () => {
+    const checkAuthentication = async () => {
       try {
-        const response = await fetch("/api/alerts");
+        const response = await fetch(
+          "http://localhost:4020/api/auth/me",
+          {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+          }
+        );
 
         if (!response.ok) {
-          throw new Error("Failed to fetch alerts");
+          router.push("/login");
+          return;
         }
 
-        const data: AlertsResponse = await response.json();
+        const data = await response.json();
 
-        setAlerts(data.alerts);
-        setLastUpdated(new Date());
-        setError(null);
-      } catch (err) {
-        console.error("[DASHBOARD] Failed to load alerts:", err);
-        setError("Couldn't reach the alerts feed. Retrying won't help until the service is back up.");
-      } finally {
-        setLoading(false);
+        if (!data.success) {
+          router.push("/login");
+          return;
+        }
+
+        setAuthChecked(true);
+      } catch (error) {
+        console.error("[AUTH] Authentication check failed:", error);
+        router.push("/login");
       }
     };
 
-    fetchAlerts();
+    checkAuthentication();
+  }, [router]);
+
+  /*
+   * Load a page of alerts. page 1 replaces the list (initial load /
+   * refresh); later pages append, for "load more".
+   */
+  const fetchAlerts = useCallback(async (page: number) => {
+    try {
+      if (page === 1) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      const response = await fetch(`/api/alerts?page=${page}`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch alerts");
+      }
+
+      const data: AlertsResponse = await response.json();
+
+      setAlerts((current) =>
+        page === 1 ? data.alerts ?? [] : [...current, ...(data.alerts ?? [])]
+      );
+      setPagination(data.pagination ?? null);
+      setLastUpdated(new Date());
+      setError(null);
+    } catch (err) {
+      console.error("[DASHBOARD] Failed to load alerts:", err);
+      setError("Unable to reach the alert feed.");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
   }, []);
 
   useEffect(() => {
+    if (!authChecked) return;
+
+    fetchAlerts(1);
+  }, [fetchAlerts, authChecked]);
+
+  /*
+   * Live Socket.IO connection.
+   */
+  useEffect(() => {
+    if (!authChecked) return;
     let socket: ReturnType<typeof io> | null = null;
 
     const connectSocket = async () => {
-        try {
-            const response = await fetch("/api/socket-token");
+      try {
+        const response = await fetch("/api/socket-token", {
+          cache: "no-store",
+        });
 
-            if (!response.ok) {
-                throw new Error("Failed to obtain socket token");
-            }
-
-            const data = await response.json();
-
-            if (!data.success || !data.token) {
-                throw new Error("Invalid socket authentication response");
-            }
-
-            socket = io("http://localhost:4010", {
-                auth: {
-                    token: data.token,
-                },
-            });
-
-            socket.on("connect", () => {
-                console.log(
-                    "[DASHBOARD] Socket.IO connected:",
-                    socket?.id
-                );
-            });
-
-            socket.on("connect_error", (error) => {
-                console.error(
-                    "[DASHBOARD] Socket.IO authentication failed:",
-                    error.message
-                );
-            });
-
-            socket.on("new-alert", (data) => {
-                console.log("[DASHBOARD] New alert received:", data);
-
-                if (data?.alert) {
-                    setAlerts((currentAlerts) => [
-                        data.alert,
-                        ...currentAlerts,
-                    ]);
-
-                    setLastUpdated(new Date());
-                }
-            });
-
-            socket.on("disconnect", () => {
-                console.log("[DASHBOARD] Socket.IO disconnected");
-            });
-        } catch (error) {
-            console.error(
-                "[DASHBOARD] Failed to connect Socket.IO:",
-                error
-            );
+        if (!response.ok) {
+          throw new Error("Failed to obtain socket token");
         }
+
+        const data = await response.json();
+
+        if (!data.success || !data.token) {
+          throw new Error("Invalid socket authentication response");
+        }
+
+        socket = io("http://localhost:4010", {
+          auth: {
+            token: data.token,
+          },
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+        });
+
+        socket.on("connect", () => {
+          console.log("[DASHBOARD] Socket.IO connected:", socket?.id);
+          setSocketConnected(true);
+        });
+
+        socket.on("connect_error", (error) => {
+          console.error(
+            "[DASHBOARD] Socket.IO connection failed:",
+            error.message
+          );
+
+          setSocketConnected(false);
+        });
+
+        socket.on("disconnect", () => {
+          console.log("[DASHBOARD] Socket.IO disconnected");
+          setSocketConnected(false);
+        });
+
+        socket.on("alert-acknowledged", (data) => {
+          console.log("[DASHBOARD] Alert acknowledged:", data);
+
+          setAlerts((current) =>
+            current.map((alert) =>
+              alert.alert_id === data.alertId
+                ? {
+                  ...alert,
+                  status: "ACKNOWLEDGED",
+                  acknowledged_at: data.acknowledgedAt,
+                }
+                : alert
+            )
+          );
+
+          setSelectedAlert((current): Alert | null => {
+            if (!current || current.alert_id !== data.alertId) {
+              return current;
+            }
+
+            return {
+              ...current,
+              status: "ACKNOWLEDGED",
+              acknowledged_at: data.acknowledgedAt,
+            };
+          });
+
+          setLastUpdated(new Date());
+        });
+
+        socket.on("new-alert", (data) => {
+          console.log("[DASHBOARD] New alert received:", data);
+
+          if (data?.alert) {
+            setAlerts((current) => [
+              data.alert,
+              ...current.filter(
+                (alert) => alert.alert_id !== data.alert.alert_id
+              ),
+            ]);
+
+            setLastUpdated(new Date());
+          }
+        });
+      } catch (err) {
+        console.error("[DASHBOARD] Failed to connect Socket.IO:", err);
+      }
     };
 
     connectSocket();
 
     return () => {
-        socket?.disconnect();
+      socket?.disconnect();
     };
-}, []);
+  }, [authChecked]);
 
+  /*
+   * Close the alert modal on Escape, and move focus to its close
+   * button when it opens.
+   */
+  useEffect(() => {
+    if (!selectedAlert) return;
+
+    closeButtonRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedAlert(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedAlert]);
+
+  /*
+   * Acknowledge alert.
+   */
   const acknowledgeAlert = async (alertId: string) => {
     try {
-      const response = await fetch(
-        `/api/alerts/${alertId}/acknowledge`,
-        { method: "PATCH" }
-      );
+      const response = await fetch(`/api/alerts/${alertId}/acknowledge`, {
+        method: "PATCH",
+      });
 
       if (!response.ok) {
         throw new Error("Failed to acknowledge alert");
       }
 
-      setAlerts((currentAlerts) =>
-        currentAlerts.map((alert) =>
+      setAlerts((current) =>
+        current.map((alert) =>
           alert.alert_id === alertId
             ? {
-                ...alert,
-                status: "ACKNOWLEDGED",
-                acknowledged_at: new Date().toISOString(),
-              }
+              ...alert,
+              status: "ACKNOWLEDGED",
+              acknowledged_at: new Date().toISOString(),
+            }
             : alert
         )
       );
 
+      setSelectedAlert((current) =>
+        current?.alert_id === alertId
+          ? {
+            ...current,
+            status: "ACKNOWLEDGED",
+            acknowledged_at: new Date().toISOString(),
+          }
+          : current
+      );
+
       setLastUpdated(new Date());
-    } catch (error) {
-      console.error("[DASHBOARD] Failed to acknowledge alert:", error);
+    } catch (err) {
+      console.error("[DASHBOARD] Failed to acknowledge alert:", err);
     }
   };
 
-  const counts = useMemo(() => {
-    const base: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+  /*
+   * Statistics.
+   */
+  const statistics = useMemo(() => {
+    const result = {
+      total: alerts.length,
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      open: 0,
+      acknowledged: 0,
+    };
+
     for (const alert of alerts) {
-      if (base[alert.severity] !== undefined) base[alert.severity] += 1;
+      const severity = alert.severity.toLowerCase();
+
+      if (severity === "critical") result.critical++;
+      if (severity === "high") result.high++;
+      if (severity === "medium") result.medium++;
+      if (severity === "low") result.low++;
+
+      if (alert.status === "ACKNOWLEDGED") {
+        result.acknowledged++;
+      } else {
+        result.open++;
+      }
     }
-    return base;
+
+    return result;
   }, [alerts]);
 
-  const total = alerts.length;
-
-  const highestActiveSeverity = useMemo(() => {
-    return SEVERITY_ORDER.find((sev) => counts[sev] > 0) ?? null;
-  }, [counts]);
-
+  /*
+   * Filter alerts.
+   */
   const visibleAlerts = useMemo(() => {
-    if (activeFilter === "ALL") return alerts;
-    return alerts.filter((a) => a.severity === activeFilter);
+    if (activeFilter === "ALL") {
+      return alerts;
+    }
+
+    return alerts.filter((alert) => alert.severity === activeFilter);
   }, [alerts, activeFilter]);
 
-  const topBarStyle = highestActiveSeverity
-    ? severityStyle(highestActiveSeverity)
-    : null;
-
+  const canLoadMore = Boolean(
+    pagination && pagination.page < pagination.totalPages
+  );
+  if (!authChecked) {
+    return null;
+  }
   return (
     <main
-      className={`${sans.variable} ${mono.variable} min-h-screen bg-[#0A0C10] font-sans text-slate-200 antialiased`}
+      className={`${sans.variable} ${mono.variable} min-h-screen bg-[#07090D] text-slate-200 antialiased`}
     >
-      {/* Status rail — reflects the most severe class currently active */}
+      {/* Background grid */}
       <div
-        className={`h-[2px] w-full transition-colors duration-500 ${
-          topBarStyle ? topBarStyle.bar : "bg-white/[0.06]"
-        }`}
-      />
-
-      {/* Faint radar-grid backdrop, purely atmospheric, kept very quiet */}
-      <div
-        className="pointer-events-none fixed inset-0 opacity-[0.035]"
+        className="pointer-events-none fixed inset-0 opacity-[0.025]"
         style={{
           backgroundImage:
             "linear-gradient(to right, #ffffff 1px, transparent 1px), linear-gradient(to bottom, #ffffff 1px, transparent 1px)",
@@ -285,328 +452,565 @@ export default function Dashboard() {
         }}
       />
 
-      <div className="relative">
+      <div className="relative mx-auto w-full max-w-[1500px]">
         {/* Header */}
-        <header className="border-b border-white/[0.06] px-6 py-5 sm:px-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <svg width="26" height="26" viewBox="0 0 30 30" fill="none" className="text-emerald-400">
-                <path
-                  d="M15 2.5L26 7v8.2c0 6.6-4.6 11-11 12.3-6.4-1.3-11-5.7-11-12.3V7l11-4.5z"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinejoin="round"
-                />
-                <circle cx="15" cy="14" r="3.2" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
+        <header className="border-b border-white/[0.07] px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/5">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 30 30"
+                  fill="none"
+                  className="text-emerald-400"
+                >
+                  <path
+                    d="M15 2.5L26 7v8.2c0 6.6-4.6 11-11 12.3-6.4-1.3-11-5.7-11-12.3V7l11-4.5z"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="15" cy="14" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+                </svg>
+              </div>
 
               <div>
-                <h1 className="text-[16px] font-semibold tracking-tight text-white">
+                <h1 className="text-base font-semibold tracking-tight text-white sm:text-lg">
                   SentinelIDS
                 </h1>
+
                 <p className="font-mono text-[11px] text-slate-500">
-                  Intrusion detection · live feed
+                  Intrusion Detection & Response
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-5">
-              {lastUpdated && (
-                <span className="hidden font-mono text-[11px] text-slate-500 sm:inline">
-                  synced {lastUpdated.toLocaleTimeString(undefined, {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })}
-                </span>
-              )}
+            <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:gap-4 lg:w-auto lg:justify-end lg:gap-5">
+              <div className="font-mono text-[11px] text-slate-500">
+                {lastUpdated
+                  ? `updated ${formatTime(lastUpdated.toISOString())}`
+                  : "waiting for data"}
+              </div>
 
               <div className="flex items-center gap-2">
-                <span className="relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                </span>
-                <span className="font-mono text-[11px] font-medium text-slate-400">
-                  monitoring
+                <span
+                  className={`h-2 w-2 rounded-full ${socketConnected
+                    ? "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]"
+                    : "bg-red-400"
+                    }`}
+                />
+
+                <span className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+                  {socketConnected ? "Live" : "Offline"}
                 </span>
               </div>
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch("http://localhost:4020/api/auth/logout", {
+                      method: "POST",
+                      credentials: "include",
+                    });
+                  } catch (error) {
+                    console.error("[AUTH] Logout failed:", error);
+                  } finally {
+                    router.push("/login");
+                  }
+                }}
+                className="rounded-md border border-white/[0.08] px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-slate-400 transition hover:border-emerald-400/30 hover:text-emerald-300"
+              >
+                LogOut
+              </button>
             </div>
           </div>
         </header>
 
-        {/* Severity summary strip — one bordered instrument, not four cards */}
-        <section className="px-6 pt-6 sm:px-8">
-          <div className="grid grid-cols-2 divide-x divide-y divide-white/[0.06] overflow-hidden rounded-lg border border-white/[0.06] bg-white/[0.015] sm:grid-cols-4 sm:divide-y-0">
-            {SEVERITY_ORDER.map((sev) => {
-              const style = severityStyle(sev);
-              const share = total > 0 ? counts[sev] / total : 0;
+        {/* System status */}
+        <section className="px-4 pt-5 sm:px-6 sm:pt-6 lg:px-8">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.015] px-4 py-3">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                Detection Engine
+              </p>
 
-              return (
-                <div key={sev} className="px-5 py-4">
-                  <div className="flex items-baseline justify-between">
-                    <p className="text-[12px] text-slate-500">{style.label}</p>
-                    <p className={`font-mono text-[22px] font-semibold leading-none ${style.text}`}>
-                      {counts[sev]}
-                    </p>
-                  </div>
-                  <div className="mt-3 h-[3px] w-full overflow-hidden rounded-full bg-white/[0.05]">
-                    <div
-                      className={`h-full rounded-full ${style.bar} transition-all duration-500`}
-                      style={{ width: `${Math.max(share * 100, counts[sev] > 0 ? 6 : 0)}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+              <div className="mt-2 flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                <span className="text-sm text-slate-300">Operational</span>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.015] px-4 py-3">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                Alert Service
+              </p>
+
+              <div className="mt-2 flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                <span className="text-sm text-slate-300">Port 4010</span>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.015] px-4 py-3">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                Real-time Feed
+              </p>
+
+              <div className="mt-2 flex items-center gap-2">
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${socketConnected ? "bg-emerald-400" : "bg-red-400"
+                    }`}
+                />
+
+                <span className="text-sm text-slate-300">
+                  {socketConnected ? "Connected" : "Disconnected"}
+                </span>
+              </div>
+            </div>
           </div>
         </section>
 
-        {/* Alerts */}
-        <section className="px-6 pb-10 pt-6 sm:px-8">
-          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-[15px] font-semibold text-white">Alerts</h2>
-              <p className="text-[13px] text-slate-500">
-                {total} event{total === 1 ? "" : "s"} in the current window
+        {/* Threat overview */}
+        <section className="px-4 pt-5 sm:px-6 sm:pt-6 lg:px-8">
+          <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-white/[0.07] bg-white/[0.015] sm:grid-cols-3 lg:grid-cols-6">
+            <div className="border-b border-white/[0.06] p-4 sm:p-5 lg:border-b-0 lg:border-r">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                Total
+              </p>
+
+              <p className="mt-2 font-mono text-2xl font-semibold text-white sm:mt-3 sm:text-3xl">
+                {statistics.total}
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-x-5 border-b border-white/[0.06] sm:border-b-0">
-              {["ALL", ...SEVERITY_ORDER].map((sev) => {
-                const isActive = activeFilter === sev;
-                const style = sev === "ALL" ? null : severityStyle(sev);
-                return (
-                  <button
-                    key={sev}
-                    onClick={() => setActiveFilter(sev)}
-                    className={`relative pb-2.5 font-mono text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${
-                      isActive ? "text-white" : "text-slate-500 hover:text-slate-300"
-                    }`}
+            {SEVERITIES.map((severity) => {
+              const style = getSeverity(severity);
+
+              return (
+                <div
+                  key={severity}
+                  className="border-b border-white/[0.06] p-4 sm:p-5 last:border-r-0 lg:border-b-0 lg:border-r"
+                >
+                  <p
+                    className={`font-mono text-[10px] uppercase tracking-widest ${style.text}`}
                   >
-                    {sev === "ALL" ? "all" : sev.toLowerCase()}
-                    <span
-                      className={`absolute inset-x-0 -bottom-px h-[2px] rounded-full transition-opacity ${
-                        isActive ? `opacity-100 ${style?.bar ?? "bg-white"}` : "opacity-0"
-                      }`}
-                    />
-                  </button>
-                );
-              })}
+                    {style.label}
+                  </p>
+
+                  <p className={`mt-2 font-mono text-2xl font-semibold sm:mt-3 sm:text-3xl ${style.text}`}>
+                    {statistics[severity.toLowerCase() as keyof typeof statistics]}
+                  </p>
+                </div>
+              );
+            })}
+
+            <div className="p-4 sm:p-5">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                Open
+              </p>
+
+              <p className="mt-2 font-mono text-2xl font-semibold text-white sm:mt-3 sm:text-3xl">
+                {statistics.open}
+              </p>
             </div>
           </div>
+        </section>
 
-          <div className="rounded-lg border border-white/[0.06] bg-white/[0.015]">
-            {loading ? (
-              <div className="flex min-h-40 items-center justify-center">
-                <p className="font-mono text-[13px] text-slate-500">loading alerts…</p>
-              </div>
-            ) : error ? (
-              <div className="flex min-h-40 flex-col items-center justify-center gap-1.5 px-6 text-center">
-                <p className="text-[13px] font-medium text-slate-300">{error}</p>
-                <p className="font-mono text-[12px] text-slate-500">
-                  check that the alerts service is running on port 4010
+        {/* Analytics */}
+        <section className="px-4 pt-5 sm:px-6 sm:pt-6 lg:px-8">
+          <AnalyticsDashboard />
+        </section>
+
+        {/* Main content */}
+        <section className="grid gap-5 px-4 pb-10 pt-5 sm:gap-6 sm:px-6 sm:pb-12 sm:pt-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:px-8">
+          {/* Alerts */}
+          <div>
+            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-emerald-400">
+                  Security Events
+                </p>
+
+                <h2 className="mt-1 text-xl font-semibold text-white">
+                  Live Alerts
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Real-time threats detected by SentinelIDS.
                 </p>
               </div>
-            ) : visibleAlerts.length === 0 ? (
-              <div className="flex min-h-40 flex-col items-center justify-center gap-1">
-                <p className="text-[13px] text-slate-300">Nothing here.</p>
-                <p className="text-[12px] text-slate-500">
-                  No {activeFilter === "ALL" ? "" : activeFilter.toLowerCase() + " "}alerts in the current window.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-white/[0.06]">
-                {visibleAlerts.map((alert) => {
-                  const style = severityStyle(alert.severity);
-                  const ts = formatTimestamp(alert.created_at);
-                  const acknowledged = alert.status === "ACKNOWLEDGED";
+
+              <div className="flex w-full flex-wrap gap-2 lg:w-auto lg:justify-end">
+                {["ALL", ...SEVERITIES].map((filter) => {
+                  const active = activeFilter === filter;
+                  const count =
+                    filter === "ALL"
+                      ? statistics.total
+                      : statistics[filter.toLowerCase() as keyof typeof statistics];
 
                   return (
-                    <div
-                      key={alert.alert_id}
-                      className="relative cursor-pointer pl-4 transition-colors hover:bg-white/[0.02]"
-                      onClick={() => setSelectedAlert(alert)}
+                    <button
+                      key={filter}
+                      onClick={() => setActiveFilter(filter)}
+                      className={`flex-1 rounded-md border px-2.5 py-2 font-mono text-[10px] uppercase tracking-wider transition focus-visible:outline sm:flex-none sm:px-3 sm:py-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/60 ${active
+                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                        : "border-white/[0.07] text-slate-500 hover:border-white/[0.15] hover:text-slate-300"
+                        }`}
                     >
-                      <span className={`absolute inset-y-0 left-0 w-[3px] ${style.bar}`} />
-
-                      <div className="flex items-start justify-between gap-6 px-4 py-4">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2.5">
-                            <span className={`flex items-center gap-1.5 font-mono text-[11px] font-semibold ${style.text}`}>
-                              <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
-                              {alert.severity}
-                            </span>
-
-                            <span className="font-mono text-[11px] text-slate-600">
-                              {acknowledged ? "acknowledged" : "open"}
-                            </span>
-
-                            {alert.threatScore !== null && (
-                              <span className="font-mono text-[11px] text-slate-500">
-                                score {alert.threatScore}
-                              </span>
-                            )}
-                          </div>
-
-                          <p className="mt-2 text-[13.5px] leading-snug text-slate-200">{alert.message}</p>
-
-                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[12px] text-slate-500">
-                            {alert.method && <span className="text-slate-400">{alert.method}</span>}
-                            {alert.path && <span className="truncate">{alert.path}</span>}
-                            {alert.sourceIp && (
-                              <span className="text-slate-600">
-                                from <span className="text-slate-400">{alert.sourceIp}</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 flex-col items-end gap-2">
-                          <div className="text-right">
-                            <p className="font-mono text-[12px] text-slate-400">{ts.time}</p>
-                            <p className="font-mono text-[11px] text-slate-600">{ts.date}</p>
-                          </div>
-
-                          {!acknowledged && (
-                            <button
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                acknowledgeAlert(alert.alert_id);
-                              }}
-                              className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
-                            >
-                              Acknowledge
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                      {filter}
+                      <span className="ml-1.5 text-slate-600">{count}</span>
+                    </button>
                   );
                 })}
               </div>
-            )}
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-white/[0.015]">
+              {loading ? (
+                <div className="divide-y divide-white/[0.06]">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div key={index} className="flex gap-4 px-5 py-4">
+                      <div className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-white/10" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3 w-24 animate-pulse rounded bg-white/5" />
+                        <div className="h-4 w-2/3 animate-pulse rounded bg-white/[0.07]" />
+                        <div className="h-3 w-1/3 animate-pulse rounded bg-white/5" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : error ? (
+                <div className="flex min-h-60 flex-col items-center justify-center gap-3 px-6 text-center">
+                  <p className="text-sm text-slate-300">{error}</p>
+
+                  <p className="font-mono text-xs text-slate-600">
+                    Verify Alert Service :4010
+                  </p>
+
+                  <button
+                    onClick={() => fetchAlerts(1)}
+                    className="mt-1 rounded-md border border-white/[0.1] px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-300 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/60"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : visibleAlerts.length === 0 ? (
+                <div className="flex min-h-60 flex-col items-center justify-center gap-2">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/20 bg-emerald-400/5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  </div>
+
+                  <p className="mt-2 text-sm text-slate-300">No threats detected</p>
+
+                  <p className="font-mono text-xs text-slate-600">
+                    System is monitoring traffic
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="divide-y divide-white/[0.06]">
+                    {visibleAlerts.map((alert) => {
+                      const style = getSeverity(alert.severity);
+
+                      return (
+                        <button
+                          key={alert.alert_id}
+                          onClick={() => setSelectedAlert(alert)}
+                          className="group relative block w-full text-left transition hover:bg-white/[0.025] focus-visible:bg-white/[0.03] focus-visible:outline-none"
+                        >
+                          <span
+                            className={`absolute inset-y-0 left-0 w-[3px] ${style.dot}`}
+                          />
+
+                          <div className="flex min-w-0 gap-3 px-4 py-4 pl-5 sm:gap-4 sm:px-5 sm:pl-6">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span
+                                  className={`font-mono text-[11px] font-semibold ${style.text}`}
+                                >
+                                  {alert.severity}
+                                </span>
+
+                                <span className="rounded border border-white/[0.07] px-2 py-0.5 font-mono text-[9px] text-slate-500">
+                                  {alert.channel}
+                                </span>
+
+                                <span className="font-mono text-[10px] text-slate-600">
+                                  {alert.status}
+                                </span>
+                              </div>
+
+                              <p className="mt-2 truncate text-sm font-medium text-slate-200">
+                                {alert.message}
+                              </p>
+
+                              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-slate-600">
+                                {alert.method && (
+                                  <span className="text-slate-400">{alert.method}</span>
+                                )}
+
+                                {alert.path && (
+                                  <span className="max-w-[min(70vw,400px)] truncate sm:max-w-[400px]">{alert.path}</span>
+                                )}
+
+                                {alert.sourceIp && <span>{alert.sourceIp}</span>}
+                              </div>
+                            </div>
+
+                            <div className="hidden shrink-0 text-right md:block">
+                              {alert.threatScore !== null && (
+                                <>
+                                  <p className={`font-mono text-sm font-semibold ${style.text}`}>
+                                    {alert.threatScore}
+                                  </p>
+                                  <p className="font-mono text-[9px] uppercase tracking-wider text-slate-700">
+                                    score
+                                  </p>
+                                </>
+                              )}
+
+                              <p className="mt-1 font-mono text-[10px] text-slate-600">
+                                {formatTime(alert.created_at)}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {canLoadMore && (
+                    <div className="border-t border-white/[0.06] p-3 text-center">
+                      <button
+                        onClick={() => fetchAlerts((pagination?.page ?? 1) + 1)}
+                        disabled={loadingMore}
+                        className="rounded-md border border-white/[0.1] px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-400 transition hover:border-white/20 hover:text-slate-200 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/60"
+                      >
+                        {loadingMore ? "Loading…" : "Load older alerts"}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
+
+          {/* Right panel */}
+          <aside className="space-y-6">
+            {/* System health */}
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.015]">
+              <div className="border-b border-white/[0.06] px-5 py-4">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                  Infrastructure
+                </p>
+
+                <h3 className="mt-1 font-semibold text-white">System Health</h3>
+              </div>
+
+              <div className="divide-y divide-white/[0.06]">
+                {[
+                  { name: "Gateway", value: "4000", healthy: true },
+                  { name: "Event Bus", value: "Redis", healthy: true },
+                  { name: "Threat Engine", value: "Active", healthy: true },
+                  { name: "Incident Store", value: "MySQL", healthy: true },
+                  { name: "Alert Service", value: "4010", healthy: true },
+                ].map(({ name, value, healthy }) => (
+                  <div key={name} className="flex items-center justify-between px-5 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${healthy ? "bg-emerald-400" : "bg-red-400"
+                          }`}
+                      />
+
+                      <span className="text-xs text-slate-400">{name}</span>
+                    </div>
+
+                    <span className="font-mono text-[10px] text-slate-600">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Response status */}
+            <div className="rounded-lg border border-white/[0.07] bg-white/[0.015] p-5">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                Response Queue
+              </p>
+
+              <div className="mt-5 flex items-end justify-between">
+                <div>
+                  <p className="font-mono text-3xl font-semibold text-white">
+                    {statistics.open}
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-500">alerts requiring review</p>
+                </div>
+
+                <div className="text-right">
+                  <p className="font-mono text-xl font-semibold text-emerald-400">
+                    {statistics.acknowledged}
+                  </p>
+
+                  <p className="mt-1 text-[10px] text-slate-600">acknowledged</p>
+                </div>
+              </div>
+            </div>
+          </aside>
         </section>
       </div>
 
+      {/* Alert details modal */}
       {selectedAlert && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 p-2 backdrop-blur-sm sm:p-4"
           onClick={() => setSelectedAlert(null)}
         >
           <div
-            className={`w-full max-w-2xl rounded-xl border border-white/[0.08] bg-[#0D0F14] shadow-2xl ring-1 ${severityStyle(selectedAlert.severity).ring}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="alert-modal-title"
+            className="my-auto w-full max-w-2xl overflow-hidden rounded-xl border border-white/[0.09] bg-[#0C0F14] shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            {/* Modal header */}
-            <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-4">
-              <div className="flex items-center gap-2.5">
-                <span className={`h-1.5 w-1.5 rounded-full ${severityStyle(selectedAlert.severity).dot}`} />
-                <div>
-                  <h3 className="text-[15px] font-semibold text-white">Alert details</h3>
-                  <p className="mt-0.5 font-mono text-[10.5px] text-slate-500">{selectedAlert.alert_id}</p>
-                </div>
+            <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-3 sm:px-6 sm:py-4">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-emerald-400">
+                  Security Event
+                </p>
+
+                <h3 id="alert-modal-title" className="mt-1 font-semibold text-white">
+                  Alert Investigation
+                </h3>
               </div>
 
               <button
+                ref={closeButtonRef}
                 onClick={() => setSelectedAlert(null)}
-                className="rounded-md px-2 py-1 text-slate-500 hover:bg-white/[0.05] hover:text-white"
-                aria-label="Close"
+                aria-label="Close alert details"
+                className="rounded-md px-2 py-1 text-slate-500 hover:bg-white/[0.05] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/60"
               >
                 ✕
               </button>
             </div>
 
-            {/* Modal content */}
-            <div className="max-h-[70vh] overflow-y-auto p-6">
-              <dl className="grid grid-cols-3 gap-x-4 gap-y-3 border-b border-white/[0.06] pb-5">
+            <div className="max-h-[80vh] overflow-y-auto p-4 sm:max-h-[75vh] sm:p-6">
+              <div className="grid gap-4 sm:grid-cols-3">
                 <div>
-                  <dt className="text-[11px] text-slate-500">Severity</dt>
-                  <dd className={`mt-1 text-[13px] font-semibold ${severityStyle(selectedAlert.severity).text}`}>
+                  <p className="font-mono text-[10px] text-slate-600">SEVERITY</p>
+
+                  <p
+                    className={`mt-1 text-sm font-semibold ${getSeverity(selectedAlert.severity).text
+                      }`}
+                  >
                     {selectedAlert.severity}
-                  </dd>
+                  </p>
                 </div>
+
                 <div>
-                  <dt className="text-[11px] text-slate-500">Status</dt>
-                  <dd className="mt-1 text-[13px] font-semibold text-slate-200">{selectedAlert.status}</dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] text-slate-500">Threat score</dt>
-                  <dd className="mt-1 font-mono text-[13px] font-semibold text-slate-200">
+                  <p className="font-mono text-[10px] text-slate-600">THREAT SCORE</p>
+
+                  <p className="mt-1 font-mono text-sm font-semibold text-white">
                     {selectedAlert.threatScore ?? "—"} / 100
-                  </dd>
+                  </p>
                 </div>
-              </dl>
 
-              <div className="border-b border-white/[0.06] py-5">
-                <p className="mb-3 text-[11px] font-medium text-slate-500">Request</p>
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-[11px] text-slate-500">Source IP</dt>
-                    <dd className="mt-1 font-mono text-[12px] text-slate-200">
-                      {selectedAlert.sourceIp ?? "Unknown"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] text-slate-500">Method</dt>
-                    <dd className="mt-1 font-mono text-[12px] text-slate-200">
-                      {selectedAlert.method ?? "Unknown"}
-                    </dd>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <dt className="text-[11px] text-slate-500">Path</dt>
-                    <dd className="mt-1 break-all font-mono text-[12px] text-slate-200">
-                      {selectedAlert.path ?? "Unknown"}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div className="border-b border-white/[0.06] py-5">
-                <p className="mb-3 text-[11px] font-medium text-slate-500">Message</p>
-                <p className="text-[13px] leading-relaxed text-slate-300">{selectedAlert.message}</p>
-              </div>
-
-              <div className="py-5">
-                <p className="mb-3 text-[11px] font-medium text-slate-500">Correlation</p>
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-[11px] text-slate-500">Incident ID</dt>
-                    <dd className="mt-1 break-all font-mono text-[11px] text-slate-300">
-                      {selectedAlert.incident_id}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] text-slate-500">Request ID</dt>
-                    <dd className="mt-1 break-all font-mono text-[11px] text-slate-300">
-                      {selectedAlert.request_id}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
                 <div>
-                  <p className="text-[11px] text-slate-500">Channel</p>
-                  <p className="mt-1 text-[12px] text-slate-300">{selectedAlert.channel}</p>
+                  <p className="font-mono text-[10px] text-slate-600">STATUS</p>
+
+                  <p className="mt-1 text-sm font-semibold text-slate-300">
+                    {selectedAlert.status}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 border-t border-white/[0.06] pt-5">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                  Request
+                </p>
+
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="text-[10px] text-slate-600">Source IP</p>
+
+                    <p className="mt-1 break-all font-mono text-xs text-slate-300">
+                      {selectedAlert.sourceIp ?? "Unknown"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-slate-600">Method</p>
+
+                    <p className="mt-1 font-mono text-xs text-slate-300">
+                      {selectedAlert.method ?? "Unknown"}
+                    </p>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <p className="text-[10px] text-slate-600">Path</p>
+
+                    <p className="mt-1 break-all font-mono text-xs text-slate-300">
+                      {selectedAlert.path ?? "Unknown"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 border-t border-white/[0.06] pt-5">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                  Message
+                </p>
+
+                <p className="mt-3 text-sm leading-relaxed text-slate-300">
+                  {selectedAlert.message}
+                </p>
+              </div>
+
+              <div className="mt-6 border-t border-white/[0.06] pt-5">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+                  Correlation
+                </p>
+
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <p className="text-[10px] text-slate-600">Alert ID</p>
+
+                    <p className="mt-1 break-all font-mono text-[11px] text-slate-300">
+                      {selectedAlert.alert_id}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-slate-600">Incident ID</p>
+
+                    <p className="mt-1 break-all font-mono text-[11px] text-slate-300">
+                      {selectedAlert.incident_id}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-slate-600">Request ID</p>
+
+                    <p className="mt-1 break-all font-mono text-[11px] text-slate-300">
+                      {selectedAlert.request_id}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-4 border-t border-white/[0.06] pt-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-mono text-[10px] text-slate-600">DETECTED</p>
+
+                  <p className="mt-1 font-mono text-xs text-slate-400">
+                    {formatDate(selectedAlert.created_at)} {formatTime(selectedAlert.created_at)}
+                  </p>
                 </div>
 
                 {selectedAlert.status !== "ACKNOWLEDGED" && (
                   <button
-                    onClick={async (event) => {
-                      event.stopPropagation();
-                      await acknowledgeAlert(selectedAlert.alert_id);
-                      setSelectedAlert((current) =>
-                        current
-                          ? {
-                              ...current,
-                              status: "ACKNOWLEDGED",
-                              acknowledged_at: new Date().toISOString(),
-                            }
-                          : null
-                      );
-                    }}
-                    className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-[12px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20"
+                    onClick={() => acknowledgeAlert(selectedAlert.alert_id)}
+                    className="w-full rounded-md border border-emerald-400/25 bg-emerald-400/10 px-4 py-2 font-mono text-[11px] text-emerald-400 sm:w-auto transition hover:bg-emerald-400/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/60"
                   >
                     Acknowledge
                   </button>
