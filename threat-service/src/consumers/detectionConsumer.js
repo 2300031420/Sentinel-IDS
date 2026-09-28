@@ -72,29 +72,46 @@ const finalizeDetection = async (requestId) => {
             aggregated.detections
         );
 
-        const threat = {
-            requestId: aggregated.requestId,
+   const threat = {
+    requestId:
+        aggregated.requestId,
 
-            timestamp: new Date().toISOString(),
+    correlationId:
+        aggregated.correlationId,
 
-            sourceIp: aggregated.sourceIp,
+    activityId:
+        aggregated.activityId,
 
-            method: aggregated.method,
+    correlationScore:
+        aggregated.correlationScore,
 
-            path: aggregated.path,
+    correlationConfidence:
+        aggregated.confidence,
 
-            detected:
-                aggregated.detections.length > 0,
+    timestamp:
+        new Date().toISOString(),
 
-            detections:
-                aggregated.detections,
+    sourceIp:
+        aggregated.sourceIp,
 
-            score:
-                result.score,
+    method:
+        aggregated.method,
 
-            severity:
-                result.severity
-        };
+    path:
+        aggregated.path,
+
+    detected:
+        aggregated.detections.length > 0,
+
+    detections:
+        aggregated.detections,
+
+    score:
+        result.score,
+
+    severity:
+        result.severity
+};
 
         console.log(
             "\n[THREAT] Aggregated Analysis:"

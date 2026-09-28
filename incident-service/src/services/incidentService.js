@@ -32,28 +32,48 @@ export const createIncident = async (threat) => {
 
     const query = `
         INSERT INTO incidents (
-            incident_id,
-            request_id,
-            source_ip,
-            method,
-            path,
-            threat_score,
-            severity,
-            status,
-            detections
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    incident_id,
+    request_id,
+    correlation_id,
+    activity_id,
+    correlation_score,
+    correlation_confidence,
+    source_ip,
+    method,
+    path,
+    threat_score,
+    severity,
+    status,
+    detections
+)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const values = [
         incidentId,
+
         threat.requestId,
+
+        threat.correlationId,
+
+        threat.activityId,
+
+        threat.correlationScore,
+
+        threat.correlationConfidence,
+
         threat.sourceIp,
+
         threat.method,
+
         threat.path,
+
         threat.score,
+
         threat.severity,
+
         "OPEN",
+
         JSON.stringify(threat.detections)
     ];
 
@@ -69,6 +89,16 @@ export const createIncident = async (threat) => {
             JSON.stringify({
                 incidentId,
                 requestId: threat.requestId,
+                correlationId: threat.correlationId,
+                activityId:
+                    threat.activityId,
+
+                correlationScore:
+                    threat.correlationScore,
+
+                correlationConfidence:
+                    threat.correlationConfidence,
+
                 sourceIp: threat.sourceIp,
                 method: threat.method,
                 path: threat.path,

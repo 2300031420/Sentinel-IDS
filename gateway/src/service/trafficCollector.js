@@ -1,3 +1,5 @@
+import crypto from "crypto";
+
 export const collectTraffic = (req, res) => {
     const responseTime = Date.now() - req.requestStartTime;
 
@@ -6,8 +8,11 @@ export const collectTraffic = (req, res) => {
         req.socket.remoteAddress ||
         "unknown";
 
+    const correlationId = crypto.randomUUID();
+
     return {
         requestId: req.requestId,
+        correlationId,
 
         timestamp: new Date().toISOString(),
 

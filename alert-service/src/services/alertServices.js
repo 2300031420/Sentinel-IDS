@@ -23,22 +23,28 @@ export const createAlert = async (incident) => {
         `Path: ${incident.path}`;
 
     const query = `
-        INSERT INTO alerts (
-            alert_id,
-            incident_id,
-            request_id,
-            severity,
-            channel,
-            status,
-            message
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `;
+    INSERT INTO alerts (
+        alert_id,
+        incident_id,
+        request_id,
+        activity_id,
+        correlation_score,
+        correlation_confidence,
+        severity,
+        channel,
+        status,
+        message
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
 
     const values = [
         alertId,
         incident.incidentId,
         incident.requestId,
+        incident.activityId,
+        incident.correlationScore,
+        incident.correlationConfidence,
         incident.severity,
         channel,
         "PENDING",
@@ -138,6 +144,17 @@ export const processIncident = async (incident) => {
             alertRequired: true,
             alertId: alertData.alertId,
             incidentId: incident.incidentId,
+            correlationId: incident.correlationId,
+            activityId:
+                incident.activityId,
+
+            correlationScore:
+                incident.correlationScore,
+
+            correlationConfidence:
+                incident.correlationConfidence,
+
+
             requestId: incident.requestId,
             severity: incident.severity,
             sourceIp: incident.sourceIp,
@@ -164,6 +181,15 @@ export const processIncident = async (incident) => {
             alertRequired: true,
             alertId: alertData.alertId,
             incidentId: incident.incidentId,
+            correlationId: incident.correlationId,
+            activityId:
+                incident.activityId,
+
+            correlationScore:
+                incident.correlationScore,
+
+            correlationConfidence:
+                incident.correlationConfidence,
             requestId: incident.requestId,
             severity: incident.severity,
             sourceIp: incident.sourceIp,

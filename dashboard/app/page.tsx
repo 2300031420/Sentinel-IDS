@@ -30,6 +30,11 @@ type Alert = {
   alert_id: string;
   incident_id: string;
   request_id: string;
+
+  activity_id: string | null;
+  correlation_score: number | null;
+  correlation_confidence: string | null;
+
   severity: string;
   channel: string;
   status: string;
@@ -746,14 +751,37 @@ export default function Dashboard() {
 
                               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-slate-600">
                                 {alert.method && (
-                                  <span className="text-slate-400">{alert.method}</span>
+                                  <span className="text-slate-400">
+                                    {alert.method}
+                                  </span>
                                 )}
 
                                 {alert.path && (
-                                  <span className="max-w-[min(70vw,400px)] truncate sm:max-w-[400px]">{alert.path}</span>
+                                  <span className="max-w-[min(70vw,400px)] truncate sm:max-w-[400px]">
+                                    {alert.path}
+                                  </span>
                                 )}
 
-                                {alert.sourceIp && <span>{alert.sourceIp}</span>}
+                                {alert.sourceIp && (
+                                  <span>
+                                    {alert.sourceIp}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px]">
+                                {alert.correlation_score !== null &&
+                                  alert.correlation_score !== undefined && (
+                                    <span className="text-slate-400">
+                                      Correlation: {alert.correlation_score}
+                                    </span>
+                                  )}
+
+                                {alert.correlation_confidence && (
+                                  <span className="text-emerald-400">
+                                    Confidence: {alert.correlation_confidence}
+                                  </span>
+                                )}
                               </div>
                             </div>
 
@@ -965,36 +993,87 @@ export default function Dashboard() {
                   {selectedAlert.message}
                 </p>
               </div>
-
               <div className="mt-6 border-t border-white/[0.06] pt-5">
                 <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
                   Correlation
                 </p>
 
-                <div className="mt-4 space-y-3">
+                <div className="mt-4 space-y-4">
+
+                  {/* Alert ID */}
                   <div>
-                    <p className="text-[10px] text-slate-600">Alert ID</p>
+                    <p className="text-[10px] text-slate-600">
+                      Alert ID
+                    </p>
 
                     <p className="mt-1 break-all font-mono text-[11px] text-slate-300">
                       {selectedAlert.alert_id}
                     </p>
                   </div>
 
+                  {/* Incident ID */}
                   <div>
-                    <p className="text-[10px] text-slate-600">Incident ID</p>
+                    <p className="text-[10px] text-slate-600">
+                      Incident ID
+                    </p>
 
                     <p className="mt-1 break-all font-mono text-[11px] text-slate-300">
                       {selectedAlert.incident_id}
                     </p>
                   </div>
 
+                  {/* Request ID */}
                   <div>
-                    <p className="text-[10px] text-slate-600">Request ID</p>
+                    <p className="text-[10px] text-slate-600">
+                      Request ID
+                    </p>
 
                     <p className="mt-1 break-all font-mono text-[11px] text-slate-300">
                       {selectedAlert.request_id}
                     </p>
                   </div>
+
+                  {/* Activity ID */}
+                  <div>
+                    <p className="text-[10px] text-slate-600">
+                      Activity ID
+                    </p>
+
+                    <p className="mt-1 break-all font-mono text-[11px] text-emerald-300">
+                      {selectedAlert.activity_id ?? "—"}
+                    </p>
+                  </div>
+
+                  {/* Correlation Metrics */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+
+                    {/* Correlation Score */}
+                    <div className="rounded-md border border-white/[0.06] bg-white/[0.015] p-3">
+                      <p className="text-[10px] uppercase tracking-wider text-slate-600">
+                        Correlation Score
+                      </p>
+
+                      <p className="mt-1 font-mono text-lg font-semibold text-white">
+                        {selectedAlert.correlation_score ?? 0}
+                        <span className="ml-1 text-xs text-slate-600">
+                          / 100
+                        </span>
+                      </p>
+                    </div>
+
+                    {/* Correlation Confidence */}
+                    <div className="rounded-md border border-white/[0.06] bg-white/[0.015] p-3">
+                      <p className="text-[10px] uppercase tracking-wider text-slate-600">
+                        Correlation Confidence
+                      </p>
+
+                      <p className="mt-1 font-mono text-lg font-semibold text-emerald-400">
+                        {selectedAlert.correlation_confidence ?? "LOW"}
+                      </p>
+                    </div>
+
+                  </div>
+
                 </div>
               </div>
 

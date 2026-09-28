@@ -62,6 +62,20 @@ export const consumeTrafficEvents = async () => {
                         message
                     );
 
+                    const event = JSON.parse(
+                        message.message.event
+                    );
+
+                    console.log(
+                        "[CORRELATION] Request ID:",
+                        event.requestId
+                    );
+
+                    console.log(
+                        "[CORRELATION] Correlation ID:",
+                        event.correlationId
+                    );
+
                     await redisClient.xAck(
                         STREAM,
                         GROUP,

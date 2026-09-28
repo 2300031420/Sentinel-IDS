@@ -9,6 +9,8 @@ export const publishDetectionResults = async ({
 }) => {
     const detectionEvent = {
         requestId: event.requestId,
+        correlationId: event.correlationId,
+
         timestamp: new Date().toISOString(),
 
         sourceIp: event.sourceIp,

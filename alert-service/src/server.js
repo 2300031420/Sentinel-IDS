@@ -79,7 +79,7 @@ io.use((socket, next) => {
     if (
         !Number.isFinite(tokenAge) ||
         tokenAge < 0 ||
-       tokenAge > 300_000
+        tokenAge > 300_000
     ) {
         console.warn(
             `[SECURITY] Expired Socket.IO authentication token`
@@ -255,6 +255,9 @@ app.get("/api/alerts", authenticateApiKey, alertApiLimiter, async (req, res) => 
         a.alert_id,
         a.incident_id,
         a.request_id,
+        a.activity_id,
+a.correlation_score,
+a.correlation_confidence,
         a.severity,
         a.channel,
         a.status,
@@ -456,12 +459,12 @@ app.get("/api/alerts/:alertId", authenticateApiKey, alertApiLimiter, async (req,
     const { alertId } = req.params;
     const parsedAlertId = alertIdSchema.safeParse(alertId);
 
-if (!parsedAlertId.success) {
-    return res.status(400).json({
-        success: false,
-        message: "Invalid alert ID"
-    });
-}
+    if (!parsedAlertId.success) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid alert ID"
+        });
+    }
 
     try {
 
@@ -471,6 +474,9 @@ if (!parsedAlertId.success) {
         a.alert_id,
         a.incident_id,
         a.request_id,
+        a.activity_id,
+a.correlation_score,
+a.correlation_confidence,
         a.severity,
         a.channel,
         a.status,
