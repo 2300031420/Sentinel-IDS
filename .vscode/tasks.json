@@ -1,0 +1,176 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Alert Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/alert-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Auth Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/auth-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Behavior Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/behavior-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Cross-Layer Correlation",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/cross-layer-correlation-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Dashboard",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/dashboard"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Event Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/event-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Evidence Preservation",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/evidence-preservation-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Gateway",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/gateway"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Host Telemetry",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/host-telemetry-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Incident Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/incident-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Server",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/server"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Signature Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/signature-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+     {
+      "label": "adaptive scoring-service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/adaptive-scoring-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Threat Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/threat-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+      {
+      "label": "Response Service",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/response-service"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "🚀 Start All SentinelIDS",
+      "dependsOn": [
+        "Alert Service",
+        "Auth Service",
+        "Behavior Service",
+        "Cross-Layer Correlation",
+        "Dashboard",
+        "Event Service",
+        "Evidence Preservation",
+        "Gateway",
+        "Host Telemetry",
+        "Incident Service",
+        "Server",
+        "Signature Service",
+        "Threat Service",
+        "adaptive scoring-service",
+        "Response Service"
+      ],
+      "dependsOrder": "parallel"
+    }
+  ]
+}

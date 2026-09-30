@@ -13,7 +13,10 @@ const SEVERITY_RANK = {
     CRITICAL: 4
 };
 
-export const calculateThreatScore = (detections) => {
+export const calculateThreatScore = (
+    detections,
+    adaptiveWeights = {}
+) => {
     if (!detections || detections.length === 0) {
         return {
             score: 0,
@@ -25,10 +28,16 @@ export const calculateThreatScore = (detections) => {
     let highestSeverity = "NONE";
 
     for (const detection of detections) {
-        score +=
-            detection.score ||
-            SEVERITY_WEIGHTS[detection.severity] ||
+        const adaptiveWeight =
+            adaptiveWeights[detection.type];
+
+        const detectionScore =
+            adaptiveWeight ??
+            detection.score ??
+            SEVERITY_WEIGHTS[detection.severity] ??
             0;
+
+        score += detectionScore;
 
         if (
             SEVERITY_RANK[detection.severity] >
@@ -52,7 +61,6 @@ export const calculateThreatScore = (detections) => {
         severity = "LOW";
     }
 
-    // Never downgrade a detection's explicit severity.
     if (
         SEVERITY_RANK[highestSeverity] >
         SEVERITY_RANK[severity]

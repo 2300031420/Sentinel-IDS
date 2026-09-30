@@ -1,5 +1,6 @@
 import redis from "../config/redis.js";
 import { calculateThreatScore } from "../services/threatScorer.js";
+import { getAdaptiveWeights } from "../services/adaptiveWeights.js";
 import {
     addDetection,
     removeDetection
@@ -68,50 +69,59 @@ const finalizeDetection = async (requestId) => {
             return;
         }
 
-        const result = calculateThreatScore(
-            aggregated.detections
+        const adaptiveWeights =
+            await getAdaptiveWeights();
+
+        console.log(
+            "[THREAT] Adaptive weights:",
+            adaptiveWeights
         );
 
-   const threat = {
-    requestId:
-        aggregated.requestId,
+        const result = calculateThreatScore(
+            aggregated.detections,
+            adaptiveWeights
+        );
 
-    correlationId:
-        aggregated.correlationId,
+        const threat = {
+            requestId:
+                aggregated.requestId,
 
-    activityId:
-        aggregated.activityId,
+            correlationId:
+                aggregated.correlationId,
 
-    correlationScore:
-        aggregated.correlationScore,
+            activityId:
+                aggregated.activityId,
 
-    correlationConfidence:
-        aggregated.confidence,
+            correlationScore:
+                aggregated.correlationScore,
 
-    timestamp:
-        new Date().toISOString(),
+            correlationConfidence:
+                aggregated.confidence,
 
-    sourceIp:
-        aggregated.sourceIp,
+            timestamp:
+                new Date().toISOString(),
 
-    method:
-        aggregated.method,
+            sourceIp:
+                aggregated.sourceIp,
 
-    path:
-        aggregated.path,
+            method:
+                aggregated.method,
 
-    detected:
-        aggregated.detections.length > 0,
+            path:
+                aggregated.path,
 
-    detections:
-        aggregated.detections,
+            detected:
+                aggregated.detections.length > 0,
 
-    score:
-        result.score,
+            detections:
+                aggregated.detections,
 
-    severity:
-        result.severity
-};
+            score:
+                result.score,
+
+            severity:
+                result.severity
+        };
 
         console.log(
             "\n[THREAT] Aggregated Analysis:"

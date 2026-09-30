@@ -1,7 +1,7 @@
 import crypto from "crypto";
 
 import pool from "../config/database.js";
-
+import { publishFeedback } from "../publisher/feedbackPublisher.js";
 import {
     markProcessing,
     markSent,
@@ -139,6 +139,12 @@ export const processIncident = async (incident) => {
         await markSent(
             alertData.alertId
         );
+        await publishFeedback({
+            detectionType:
+                incident.detections?.[0]?.type || "UNKNOWN",
+
+            responseStatus: "ALERT_SENT"
+        });
 
         return {
             alertRequired: true,
@@ -161,7 +167,8 @@ export const processIncident = async (incident) => {
             method: incident.method,
             path: incident.path,
             threatScore: incident.threatScore,
-            status: "SENT",
+            status: "ALERT_SENT",
+            responseStatus: "ALERT_SENT",
             message: alertData.message
         };
 
@@ -176,6 +183,12 @@ export const processIncident = async (incident) => {
         await markFailed(
             alertData.alertId
         );
+        await publishFeedback({
+            detectionType:
+                incident.detections?.[0]?.type || "UNKNOWN",
+
+            responseStatus: "ALERT_FAILED"
+        });
 
         return {
             alertRequired: true,
@@ -196,7 +209,8 @@ export const processIncident = async (incident) => {
             method: incident.method,
             path: incident.path,
             threatScore: incident.threatScore,
-            status: "FAILED",
+            status: "ALERT_FAILED",
+            responseStatus: "ALERT_FAILED",
             message: alertData.message
         };
     }
