@@ -30,6 +30,27 @@ export interface ThreatActivityData {
     maxScore: number;
 }
 
+export interface CrossLayerActivity {
+    activityId: string | null;
+    correlationScore: number | null;
+    correlationConfidence: string | null;
+    incidentId: string;
+    requestId: string;
+    sourceIp: string | null;
+    severity: string;
+    threatScore: number | null;
+    createdAt: string;
+}
+
+export interface CrossLayerAnalytics {
+    totalActivities: number;
+    highConfidence: number;
+    mediumConfidence: number;
+    lowConfidence: number;
+    averageCorrelationScore: number;
+    activities: CrossLayerActivity[];
+}
+
 export interface AnalyticsData {
     severity: SeverityData[];
     status: StatusData[];
@@ -37,6 +58,7 @@ export interface AnalyticsData {
     topPaths: PathData[];
     attackTypes: AttackTypeData[];
     threatActivity: ThreatActivityData[];
+    crossLayer: CrossLayerAnalytics;
 }
 
 export interface AnalyticsResponse {

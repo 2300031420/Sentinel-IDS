@@ -8,17 +8,17 @@ const DEFAULT_WEIGHTS = {
 
 const MIN_WEIGHT = 10;
 const MAX_WEIGHT = 60;
+const DECAY_STEP = 1;
 
-export const getDefaultWeights = () => {
-    return { ...DEFAULT_WEIGHTS };
-};
+export const getDefaultWeights = () => ({
+    ...DEFAULT_WEIGHTS
+});
 
-export const clampWeight = (weight) => {
-    return Math.min(
+export const clampWeight = (weight) =>
+    Math.min(
         MAX_WEIGHT,
         Math.max(MIN_WEIGHT, weight)
     );
-};
 
 export const adjustWeight = (
     currentWeight,
@@ -27,4 +27,24 @@ export const adjustWeight = (
     return clampWeight(
         currentWeight + adjustment
     );
+};
+
+export const decayWeight = (
+    detectionType,
+    currentWeight
+) => {
+    const defaultWeight =
+        DEFAULT_WEIGHTS[detectionType];
+
+    if (defaultWeight === undefined) {
+        return currentWeight;
+    }
+
+    if (currentWeight > defaultWeight) {
+        return clampWeight(
+            currentWeight - DECAY_STEP
+        );
+    }
+
+    return currentWeight;
 };

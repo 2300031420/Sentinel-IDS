@@ -17,6 +17,7 @@ const mono = IBM_Plex_Mono({
   variable: "--font-mono",
 });
 
+
 type Detection = {
   detected: boolean;
   type: string;
@@ -62,6 +63,21 @@ type AlertsResponse = {
   count: number;
   pagination: Pagination;
   alerts: Alert[];
+};
+
+type HealthResponse = {
+  success: boolean;
+  status: "OPERATIONAL" | "DEGRADED";
+  online: number;
+  total: number;
+  checkedAt: string;
+  services: {
+    name: string;
+    status: "ONLINE" | "OFFLINE";
+    latency: number | null;
+    endpoint: string;
+    error?: string;
+  }[];
 };
 
 const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
@@ -149,6 +165,8 @@ export default function Dashboard() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [healthLoading, setHealthLoading] = useState(true);
 
   useEffect(() => {
     const checkAuthentication = async () => {
@@ -183,6 +201,41 @@ export default function Dashboard() {
 
     checkAuthentication();
   }, [router]);
+
+  useEffect(() => {
+    if (!authChecked) return;
+
+    const fetchHealth = async () => {
+      try {
+        const response = await fetch("/api/health", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch system health");
+        }
+
+        const data: HealthResponse = await response.json();
+
+        if (data.success) {
+          setHealth(data);
+        }
+      } catch (error) {
+        console.error(
+          "[DASHBOARD] Failed to load system health:",
+          error
+        );
+      } finally {
+        setHealthLoading(false);
+      }
+    };
+
+    fetchHealth();
+
+    const interval = setInterval(fetchHealth, 10000);
+
+    return () => clearInterval(interval);
+  }, [authChecked]);
 
   /*
    * Load a page of alerts. page 1 replaces the list (initial load /
@@ -824,66 +877,177 @@ export default function Dashboard() {
           </div>
 
           {/* Right panel */}
-          <aside className="space-y-6">
-            {/* System health */}
-            <div className="rounded-lg border border-white/[0.07] bg-white/[0.015]">
-              <div className="border-b border-white/[0.06] px-5 py-4">
-                <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
-                  Infrastructure
-                </p>
+    {/* Right panel */}
+<aside className="space-y-6">
 
-                <h3 className="mt-1 font-semibold text-white">System Health</h3>
-              </div>
+  {/* System Health */}
+  <div className="rounded-lg border border-white/[0.07] bg-white/[0.015]">
 
-              <div className="divide-y divide-white/[0.06]">
-                {[
-                  { name: "Gateway", value: "4000", healthy: true },
-                  { name: "Event Bus", value: "Redis", healthy: true },
-                  { name: "Threat Engine", value: "Active", healthy: true },
-                  { name: "Incident Store", value: "MySQL", healthy: true },
-                  { name: "Alert Service", value: "4010", healthy: true },
-                ].map(({ name, value, healthy }) => (
-                  <div key={name} className="flex items-center justify-between px-5 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${healthy ? "bg-emerald-400" : "bg-red-400"
-                          }`}
-                      />
+    {/* Header */}
+    <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="flex items-center justify-between">
 
-                      <span className="text-xs text-slate-400">{name}</span>
-                    </div>
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+            Infrastructure
+          </p>
 
-                    <span className="font-mono text-[10px] text-slate-600">{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <h3 className="mt-1 font-semibold text-white">
+            System Health
+          </h3>
+        </div>
 
-            {/* Response status */}
-            <div className="rounded-lg border border-white/[0.07] bg-white/[0.015] p-5">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
-                Response Queue
-              </p>
+        {health && (
+          <span
+            className={`rounded-full border px-2 py-1 font-mono text-[9px] uppercase tracking-wider ${
+              health.status === "OPERATIONAL"
+                ? "border-emerald-400/20 bg-emerald-400/5 text-emerald-400"
+                : "border-amber-400/20 bg-amber-400/5 text-amber-400"
+            }`}
+          >
+            {health.status}
+          </span>
+        )}
 
-              <div className="mt-5 flex items-end justify-between">
-                <div>
-                  <p className="font-mono text-3xl font-semibold text-white">
-                    {statistics.open}
-                  </p>
+      </div>
 
-                  <p className="mt-1 text-xs text-slate-500">alerts requiring review</p>
+      {health && (
+        <p className="mt-2 font-mono text-[9px] text-slate-600">
+          {health.online}/{health.total} services online
+        </p>
+      )}
+    </div>
+
+    {/* Services */}
+    <div className="divide-y divide-white/[0.06]">
+
+      {healthLoading ? (
+        <div className="px-5 py-6 text-center">
+          <span className="font-mono text-[10px] text-slate-600">
+            Checking infrastructure...
+          </span>
+        </div>
+      ) : health ? (
+        health.services.map((service) => {
+          const healthy = service.status === "ONLINE";
+
+          return (
+            <div
+              key={service.name}
+              className="flex items-center justify-between px-5 py-3"
+            >
+
+              {/* Service information */}
+              <div className="flex min-w-0 items-center gap-2.5">
+
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    healthy
+                      ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]"
+                      : "bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.5)]"
+                  }`}
+                />
+
+                <div className="min-w-0">
+
+                  <span className="block text-xs text-slate-400">
+                    {service.name}
+                  </span>
+
+                  <span className="block max-w-[180px] truncate font-mono text-[8px] text-slate-600">
+                    {service.endpoint}
+                  </span>
+
+                  {!healthy && service.error && (
+                    <span className="mt-0.5 block max-w-[180px] truncate font-mono text-[8px] text-red-400/70">
+                      {service.error}
+                    </span>
+                  )}
+
                 </div>
-
-                <div className="text-right">
-                  <p className="font-mono text-xl font-semibold text-emerald-400">
-                    {statistics.acknowledged}
-                  </p>
-
-                  <p className="mt-1 text-[10px] text-slate-600">acknowledged</p>
-                </div>
               </div>
+
+              {/* Status and latency */}
+              <div className="ml-3 shrink-0 text-right">
+
+                <span
+                  className={`block font-mono text-[9px] ${
+                    healthy
+                      ? "text-emerald-400"
+                      : "text-red-400"
+                  }`}
+                >
+                  {service.status}
+                </span>
+
+                {service.latency !== null && (
+                  <span className="font-mono text-[9px] text-slate-600">
+                    {service.latency}ms
+                  </span>
+                )}
+
+              </div>
+
             </div>
-          </aside>
+          );
+        })
+      ) : (
+        <div className="px-5 py-6 text-center">
+          <span className="font-mono text-[10px] text-red-400">
+            Health data unavailable
+          </span>
+        </div>
+      )}
+
+    </div>
+
+    {/* Last checked */}
+    {health && (
+      <div className="border-t border-white/[0.06] px-5 py-2.5">
+        <p className="font-mono text-[8px] text-slate-700">
+          Last checked {formatTime(health.checkedAt)}
+        </p>
+      </div>
+    )}
+
+  </div>
+
+  {/* Response Queue */}
+  <div className="rounded-lg border border-white/[0.07] bg-white/[0.015] p-5">
+
+    <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+      Response Queue
+    </p>
+
+    <div className="mt-5 flex items-end justify-between">
+
+      <div>
+        <p className="font-mono text-3xl font-semibold text-white">
+          {statistics.open}
+        </p>
+
+        <p className="mt-1 text-xs text-slate-500">
+          alerts requiring review
+        </p>
+      </div>
+
+      <div className="text-right">
+
+        <p className="font-mono text-xl font-semibold text-emerald-400">
+          {statistics.acknowledged}
+        </p>
+
+        <p className="mt-1 text-[10px] text-slate-600">
+          acknowledged
+        </p>
+
+      </div>
+
+    </div>
+
+  </div>
+
+</aside>
         </section>
       </div>
 

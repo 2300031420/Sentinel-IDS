@@ -65,7 +65,8 @@ export const startThreatConsumer = async () => {
 
             for (const [, messages] of result) {
                 for (const [messageId, fields] of messages) {
-                    const threatIndex = fields.indexOf("threat");
+                    const threatIndex =
+                        fields.indexOf("threat");
 
                     if (threatIndex === -1) {
                         await redis.xack(
@@ -77,9 +78,26 @@ export const startThreatConsumer = async () => {
                         continue;
                     }
 
-                    const threat = JSON.parse(
-                        fields[threatIndex + 1]
-                    );
+                    let threat;
+
+                    try {
+                        threat = JSON.parse(
+                            fields[threatIndex + 1]
+                        );
+                    } catch (error) {
+                        console.error(
+                            `[CROSS-LAYER] Invalid threat JSON for ${messageId}:`,
+                            error.message
+                        );
+
+                        await redis.xack(
+                            THREAT_STREAM,
+                            REDIS_GROUP,
+                            messageId
+                        );
+
+                        continue;
+                    }
 
                     console.log(
                         "[CROSS-LAYER] Threat received:",
@@ -104,19 +122,45 @@ export const startThreatConsumer = async () => {
                         threat.activityId,
                         {
                             type: "WEB_THREAT",
-                            requestId: threat.requestId,
-                            sourceIp: threat.sourceIp,
-                            path: threat.path,
-                            method: threat.method,
-                            detections: threat.detections,
-                            score: threat.score,
-                            severity: threat.severity,
-                            timestamp: threat.timestamp
+
+                            requestId:
+                                threat.requestId,
+
+                            correlationId:
+                                threat.correlationId,
+
+                            /*
+                             * Preserve the host that
+                             * generated the web activity.
+                             */
+                            hostId:
+                                threat.hostId,
+
+                            sourceIp:
+                                threat.sourceIp,
+
+                            path:
+                                threat.path,
+
+                            method:
+                                threat.method,
+
+                            detections:
+                                threat.detections,
+
+                            score:
+                                threat.score,
+
+                            severity:
+                                threat.severity,
+
+                            timestamp:
+                                threat.timestamp
                         }
                     );
 
                     console.log(
-                        `[CROSS-LAYER] Web activity registered: ${threat.activityId}`
+                        `[CROSS-LAYER] Web activity registered: ${threat.activityId} | Host: ${threat.hostId}`
                     );
 
                     await redis.xack(

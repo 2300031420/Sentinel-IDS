@@ -1,16 +1,17 @@
 const correlationStore = new Map();
 
 const CORRELATION_WINDOW_MS = 60 * 1000;
+const CLEANUP_INTERVAL_MS = 30 * 1000;
 
 
 /*
  * Calculate confidence for a security activity.
- *
- * This is separate from the existing threat score.
  */
 const calculateCorrelationConfidence = (context) => {
 
     let score = 0;
+
+    const factors = [];
 
     const observations =
         context.observations;
@@ -20,57 +21,85 @@ const calculateCorrelationConfidence = (context) => {
 
 
     /*
-     * Same source IP
-     *
-     * Every activity already represents
-     * observations from the same source.
+     * Factor 1: Source identity exists
      */
     if (context.sourceIp) {
+
         score += 20;
+
+        factors.push({
+            factor: "SAME_SOURCE_IP",
+            weight: 20,
+            description:
+                "Security observations are associated with the same source IP"
+        });
     }
 
 
     /*
-     * Multiple requests indicate
-     * repeated activity.
+     * Factor 2: Multiple suspicious requests
      */
     if (requestCount >= 2) {
+
         score += 20;
+
+        factors.push({
+            factor: "REPEATED_REQUEST",
+            weight: 20,
+            description:
+                "Multiple suspicious requests occurred within the correlation window"
+        });
     }
 
 
-    /*
-     * Repeated attack type.
-     */
     const types =
         observations.map(
             observation => observation.type
         );
 
+
     const uniqueTypes =
         new Set(types);
 
 
+    /*
+     * Factor 3: Repeated detection type
+     */
     const hasRepeatedType =
         types.length > uniqueTypes.size;
 
+
     if (hasRepeatedType) {
+
         score += 15;
+
+        factors.push({
+            factor: "REPEATED_DETECTION_TYPE",
+            weight: 15,
+            description:
+                "The same detection type occurred multiple times"
+        });
     }
 
 
     /*
-     * Multiple different detection types
-     * indicate a broader attack pattern.
+     * Factor 4: Multiple attack techniques
      */
     if (uniqueTypes.size >= 2) {
+
         score += 25;
+
+        factors.push({
+            factor: "MULTIPLE_DETECTION_TYPES",
+            weight: 25,
+            description:
+                "Multiple different detection types were observed in the same activity"
+        });
     }
 
 
     /*
-     * Behavioral detections provide
-     * an additional correlation signal.
+     * Factor 5: Behavioral anomaly
      */
     const hasBehavioralDetection =
         observations.some(
@@ -79,31 +108,152 @@ const calculateCorrelationConfidence = (context) => {
                 "HIGH_REQUEST_RATE"
         );
 
+
     if (hasBehavioralDetection) {
+
         score += 20;
+
+        factors.push({
+            factor: "BEHAVIORAL_DETECTION",
+            weight: 20,
+            description:
+                "Behavioral analysis detected an abnormal request pattern"
+        });
     }
 
 
-    score = Math.min(score, 100);
+    score =
+        Math.min(
+            score,
+            100
+        );
 
 
     let confidence;
 
+
     if (score >= 90) {
+
         confidence = "CRITICAL";
+
     } else if (score >= 70) {
+
         confidence = "HIGH";
+
     } else if (score >= 40) {
+
         confidence = "MEDIUM";
+
     } else {
+
         confidence = "LOW";
     }
 
 
     return {
         score,
-        confidence
+        confidence,
+        factors
     };
+};
+
+
+/*
+ * Remove expired activities.
+ */
+export const cleanupExpiredCorrelations = () => {
+
+    const now = Date.now();
+
+    let removedCount = 0;
+
+
+    for (
+        const [
+            activityId,
+            context
+        ]
+        of correlationStore.entries()
+    ) {
+
+        const lastSeen =
+            new Date(
+                context.lastSeen
+            ).getTime();
+
+
+        /*
+         * Remove invalid timestamps
+         * instead of keeping corrupted
+         * contexts forever.
+         */
+        if (!Number.isFinite(lastSeen)) {
+
+            correlationStore.delete(
+                activityId
+            );
+
+            removedCount++;
+
+            continue;
+        }
+
+
+        if (
+            now - lastSeen >
+            CORRELATION_WINDOW_MS
+        ) {
+
+            correlationStore.delete(
+                activityId
+            );
+
+            removedCount++;
+        }
+    }
+
+
+    if (removedCount > 0) {
+
+        console.log(
+            `[CORRELATION] Cleaned ${removedCount} expired activities`
+        );
+    }
+
+
+    return removedCount;
+};
+
+
+/*
+ * Automatically clean the in-memory
+ * correlation store.
+ *
+ * Runs every 30 seconds.
+ */
+const cleanupTimer =
+    setInterval(
+        cleanupExpiredCorrelations,
+        CLEANUP_INTERVAL_MS
+    );
+
+
+/*
+ * Prevent the cleanup timer from
+ * keeping the Node.js process alive
+ * during shutdown.
+ */
+cleanupTimer.unref();
+
+
+/*
+ * Graceful cleanup for application shutdown.
+ */
+export const stopCorrelationCleanup = () => {
+
+    clearInterval(
+        cleanupTimer
+    );
 };
 
 
@@ -123,6 +273,11 @@ const findRelatedActivity = (
             new Date(
                 context.lastSeen
             ).getTime();
+
+
+        if (!Number.isFinite(lastSeen)) {
+            continue;
+        }
 
 
         const withinWindow =
@@ -168,10 +323,6 @@ export const addObservation = (
     }
 
 
-    /*
-     * Ignore events that contain
-     * no actual security detection.
-     */
     if (
         !detections ||
         detections.length === 0
@@ -179,6 +330,13 @@ export const addObservation = (
 
         return null;
     }
+
+
+    /*
+     * Remove stale contexts before
+     * attempting correlation.
+     */
+    cleanupExpiredCorrelations();
 
 
     const now = Date.now();
@@ -195,9 +353,9 @@ export const addObservation = (
 
 
     /*
-     * If this is a new request-level
-     * correlation ID, search for an
-     * existing security activity.
+     * Otherwise search for an
+     * existing activity from the
+     * same source IP.
      */
     if (!context) {
 
@@ -209,8 +367,7 @@ export const addObservation = (
 
 
     /*
-     * No existing activity.
-     * Create a new one.
+     * Create a new activity.
      */
     if (!context) {
 
@@ -237,7 +394,9 @@ export const addObservation = (
 
             correlationScore: 0,
 
-            confidence: "LOW"
+            confidence: "LOW",
+
+            correlationFactors: []
         };
 
 
@@ -255,16 +414,9 @@ export const addObservation = (
     }
 
 
-    /*
-     * Count this request.
-     */
     context.requestCount += 1;
 
 
-    /*
-     * Store every actual
-     * security observation.
-     */
     for (
         const detection
         of detections
@@ -302,10 +454,6 @@ export const addObservation = (
     }
 
 
-    /*
-     * Recalculate confidence
-     * after adding observations.
-     */
     const confidence =
         calculateCorrelationConfidence(
             context
@@ -318,6 +466,9 @@ export const addObservation = (
     context.confidence =
         confidence.confidence;
 
+
+    context.correlationFactors =
+        confidence.factors;
 
     return context;
 };
@@ -342,36 +493,4 @@ export const removeCorrelationContext = (
     correlationStore.delete(
         activityId
     );
-};
-
-
-export const cleanupExpiredCorrelations = () => {
-
-    const now = Date.now();
-
-
-    for (
-        const [
-            activityId,
-            context
-        ]
-        of correlationStore.entries()
-    ) {
-
-        const lastSeen =
-            new Date(
-                context.lastSeen
-            ).getTime();
-
-
-        if (
-            now - lastSeen >
-            CORRELATION_WINDOW_MS
-        ) {
-
-            correlationStore.delete(
-                activityId
-            );
-        }
-    }
 };

@@ -4,10 +4,16 @@ const FEEDBACK_STREAM =
     process.env.FEEDBACK_STREAM || "ids:feedback";
 
 export const publishFeedback = async ({
+    requestId,
+    activityId,
+    incidentId,
     detectionType,
     responseStatus
 }) => {
     const feedback = {
+        requestId: requestId || null,
+        activityId: activityId || null,
+        incidentId: incidentId || null,
         detectionType,
         responseStatus
     };

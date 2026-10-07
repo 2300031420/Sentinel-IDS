@@ -2,6 +2,9 @@ import { evaluateFeedback } from "./feedbackEvaluator.js";
 import { applyFeedback } from "./applyFeedback.js";
 
 export const processFeedback = async ({
+    requestId,
+    activityId,
+    incidentId,
     detectionType,
     feedback
 }) => {
@@ -9,6 +12,9 @@ export const processFeedback = async ({
 
     if (evaluated.outcome === "UNKNOWN") {
         return {
+            requestId,
+            activityId,
+            incidentId,
             detectionType,
             ...evaluated
         };
@@ -16,6 +22,11 @@ export const processFeedback = async ({
 
     return await applyFeedback(
         detectionType,
-        evaluated
+        evaluated,
+        {
+            requestId,
+            activityId,
+            incidentId
+        }
     );
 };

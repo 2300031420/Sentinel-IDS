@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-
+import CrossLayerAnalytics from "./CrossLayerAnalytics";
 import {
     fetchAnalytics,
     type AnalyticsData,
@@ -205,21 +205,19 @@ export default function AnalyticsDashboard() {
             <span className="relative flex h-1.5 w-1.5">
                 {(refreshing || connected) && (
                     <span
-                        className={`absolute inline-flex h-full w-full animate-ping rounded-full ${
-                            refreshing
+                        className={`absolute inline-flex h-full w-full animate-ping rounded-full ${refreshing
                                 ? "bg-amber-400"
                                 : "bg-emerald-400"
-                        } opacity-75`}
+                            } opacity-75`}
                     />
                 )}
                 <span
-                    className={`relative inline-flex h-1.5 w-1.5 rounded-full ${
-                        refreshing
+                    className={`relative inline-flex h-1.5 w-1.5 rounded-full ${refreshing
                             ? "bg-amber-400"
                             : connected
-                            ? "bg-emerald-400"
-                            : "bg-slate-600"
-                    }`}
+                                ? "bg-emerald-400"
+                                : "bg-slate-600"
+                        }`}
                 />
             </span>
 
@@ -227,8 +225,8 @@ export default function AnalyticsDashboard() {
                 {refreshing
                     ? "Updating"
                     : connected
-                    ? "Live"
-                    : "Reconnecting"}
+                        ? "Live"
+                        : "Reconnecting"}
             </span>
 
             {lastUpdated && !refreshing && (
@@ -260,9 +258,8 @@ export default function AnalyticsDashboard() {
                                 key={index}
                                 className="h-[340px] animate-pulse rounded-2xl border border-white/10 bg-slate-950/70"
                                 style={{
-                                    animationDelay: `${
-                                        index * 80
-                                    }ms`,
+                                    animationDelay: `${index * 80
+                                        }ms`,
                                 }}
                             />
                         )
@@ -324,9 +321,8 @@ export default function AnalyticsDashboard() {
             </div>
 
             <div
-                className={`grid grid-cols-1 gap-5 lg:grid-cols-2 transition-opacity duration-300 ${
-                    refreshing ? "opacity-90" : "opacity-100"
-                }`}
+                className={`grid grid-cols-1 gap-5 lg:grid-cols-2 transition-opacity duration-300 ${refreshing ? "opacity-90" : "opacity-100"
+                    }`}
             >
                 <ThreatActivity
                     data={analytics.threatActivity}
@@ -346,6 +342,10 @@ export default function AnalyticsDashboard() {
 
                 <TopPaths
                     data={analytics.topPaths}
+                />
+
+                <CrossLayerAnalytics
+                    data={analytics.crossLayer}
                 />
             </div>
         </section>

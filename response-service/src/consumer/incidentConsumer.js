@@ -1,6 +1,7 @@
 import redis from "../config/redis.js";
 import { shouldMitigate } from "../response/responseEngine.js";
 import { blockIp } from "../response/blocklist.js";
+
 const INCIDENT_STREAM =
     process.env.INCIDENT_STREAM || "ids:incidents";
 
@@ -101,6 +102,7 @@ export const startIncidentConsumer = async () => {
                         "[RESPONSE] Incident received:",
                         incident
                     );
+
                     const mitigationRequired =
                         shouldMitigate(incident);
 
@@ -111,13 +113,23 @@ export const startIncidentConsumer = async () => {
 
                     if (mitigationRequired) {
                         const detectionType =
-                            incident.detections?.[0]?.type || "UNKNOWN";
+                            incident.detections?.[0]?.type ||
+                            "UNKNOWN";
 
                         const blocked =
                             await blockIp(
                                 incident.sourceIp,
-                                detectionType
+                                {
+                                    detectionType,
+                                    requestId:
+                                        incident.requestId || null,
+                                    activityId:
+                                        incident.activityId || null,
+                                    incidentId:
+                                        incident.incidentId || null
+                                }
                             );
+
                         console.log(
                             "[RESPONSE] Block result:",
                             blocked

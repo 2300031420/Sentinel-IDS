@@ -57,13 +57,14 @@ const publishThreat = async (threat) => {
     );
 
     console.log(
-        `[THREAT BUS] Published ${threat.requestId}`
+        `[THREAT BUS] Published ${threat.requestId} | Host: ${threat.hostId}`
     );
 };
 
 const finalizeDetection = async (requestId) => {
     try {
-        const aggregated = pendingMessages.get(requestId);
+        const aggregated =
+            pendingMessages.get(requestId);
 
         if (!aggregated) {
             return;
@@ -98,7 +99,12 @@ const finalizeDetection = async (requestId) => {
             correlationConfidence:
                 aggregated.confidence,
 
+            // Preserve the host that generated the traffic
+            hostId:
+                aggregated.hostId,
+
             timestamp:
+                aggregated.timestamp ||
                 new Date().toISOString(),
 
             sourceIp:
@@ -242,6 +248,10 @@ export const startDetectionConsumer = async () => {
 
                     const requestId =
                         detectionEvent.requestId;
+
+                    console.log(
+                        `[THREAT] Detection received | Request: ${requestId} | Host: ${detectionEvent.hostId}`
+                    );
 
                     const aggregated =
                         addDetection(detectionEvent);

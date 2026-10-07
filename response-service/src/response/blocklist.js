@@ -8,7 +8,12 @@ const getBlockKey = (sourceIp) =>
 
 export const blockIp = async (
     sourceIp,
-    detectionType = "UNKNOWN"
+    {
+        detectionType = "UNKNOWN",
+        requestId = null,
+        activityId = null,
+        incidentId = null
+    } = {}
 ) => {
     if (!sourceIp) {
         return false;
@@ -16,15 +21,23 @@ export const blockIp = async (
 
     const key = getBlockKey(sourceIp);
 
+    const blockData = {
+        detectionType,
+        requestId,
+        activityId,
+        incidentId,
+        blockedAt: new Date().toISOString()
+    };
+
     await redis.set(
         key,
-        detectionType,
+        JSON.stringify(blockData),
         "EX",
         BLOCK_TTL_SECONDS
     );
 
     console.log(
-        `[RESPONSE] IP blocked: ${sourceIp} | Reason: ${detectionType} | TTL: ${BLOCK_TTL_SECONDS}s`
+        `[RESPONSE] IP blocked: ${sourceIp} | Reason: ${detectionType} | Activity: ${activityId} | Incident: ${incidentId} | TTL: ${BLOCK_TTL_SECONDS}s`
     );
 
     return true;
@@ -37,7 +50,22 @@ export const getBlockReason = async (sourceIp) => {
 
     const key = getBlockKey(sourceIp);
 
-    return await redis.get(key);
+    const value = await redis.get(key);
+
+    if (!value) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch {
+        return {
+            detectionType: value,
+            requestId: null,
+            activityId: null,
+            incidentId: null
+        };
+    }
 };
 
 export const isIpBlocked = async (sourceIp) => {

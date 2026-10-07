@@ -1,13 +1,40 @@
 import { getDefaultWeights } from "./weightModel.js";
 import { loadWeights, saveWeight } from "./weightPersistence.js";
 
+const MIN_WEIGHT = 0;
+const MAX_WEIGHT = 100;
+
 const weights = getDefaultWeights();
 
 export const initializeWeights = async () => {
     const storedWeights = await loadWeights();
 
     for (const [type, weight] of Object.entries(storedWeights)) {
-        weights[type] = weight;
+        const numericWeight = Number(weight);
+
+        if (!Number.isFinite(numericWeight)) {
+            console.warn(
+                `[ADAPTIVE] Ignoring invalid stored weight for ${type}: ${weight}`
+            );
+
+            continue;
+        }
+
+        const safeWeight = Math.min(
+            MAX_WEIGHT,
+            Math.max(
+                MIN_WEIGHT,
+                numericWeight
+            )
+        );
+
+        if (safeWeight !== numericWeight) {
+            console.warn(
+                `[ADAPTIVE] Clamped stored weight for ${type}: ${numericWeight} → ${safeWeight}`
+            );
+        }
+
+        weights[type] = safeWeight;
     }
 
     console.log(
@@ -24,12 +51,38 @@ export const setWeight = async (
     detectionType,
     weight
 ) => {
-    weights[detectionType] = weight;
+    const numericWeight = Number(weight);
+
+    if (!Number.isFinite(numericWeight)) {
+        console.warn(
+            `[ADAPTIVE] Rejected invalid weight for ${detectionType}: ${weight}`
+        );
+
+        return false;
+    }
+
+    const safeWeight = Math.min(
+        MAX_WEIGHT,
+        Math.max(
+            MIN_WEIGHT,
+            numericWeight
+        )
+    );
+
+    if (safeWeight !== numericWeight) {
+        console.warn(
+            `[ADAPTIVE] Clamped weight for ${detectionType}: ${numericWeight} → ${safeWeight}`
+        );
+    }
+
+    weights[detectionType] = safeWeight;
 
     await saveWeight(
         detectionType,
-        weight
+        safeWeight
     );
+
+    return true;
 };
 
 export const getAllWeights = () => {

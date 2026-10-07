@@ -1,4 +1,5 @@
 import crypto from "crypto";
+
 export const shouldPreserveEvidence = (incident) => {
     if (!incident) {
         return false;
@@ -10,7 +11,10 @@ export const shouldPreserveEvidence = (incident) => {
     );
 };
 
-export const buildEvidencePackage = (incident) => {
+export const buildEvidencePackage = (
+    incident,
+    hostTelemetry = null
+) => {
     return {
         evidenceId: crypto.randomUUID(),
 
@@ -36,6 +40,18 @@ export const buildEvidencePackage = (incident) => {
         },
 
         detections: incident.detections || [],
+
+        hostTelemetry: hostTelemetry
+            ? {
+                hostId: hostTelemetry.hostId,
+                cpuUsage: hostTelemetry.cpuUsage,
+                memoryUsage: hostTelemetry.memoryUsage,
+                processCount: hostTelemetry.processCount,
+                platform: hostTelemetry.platform,
+                architecture: hostTelemetry.architecture,
+                timestamp: hostTelemetry.timestamp
+            }
+            : null,
 
         incidentStatus: incident.status
     };

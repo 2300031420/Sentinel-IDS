@@ -140,6 +140,10 @@ export const processIncident = async (incident) => {
             alertData.alertId
         );
         await publishFeedback({
+            requestId: incident.requestId,
+            activityId: incident.activityId,
+            incidentId: incident.incidentId,
+
             detectionType:
                 incident.detections?.[0]?.type || "UNKNOWN",
 
@@ -184,6 +188,10 @@ export const processIncident = async (incident) => {
             alertData.alertId
         );
         await publishFeedback({
+            requestId: incident.requestId,
+            activityId: incident.activityId,
+            incidentId: incident.incidentId,
+
             detectionType:
                 incident.detections?.[0]?.type || "UNKNOWN",
 

@@ -9,12 +9,24 @@ import {
 
 export const applyFeedback = async (
     detectionType,
-    feedback
+    feedback,
+    {
+        requestId = null,
+        activityId = null,
+        incidentId = null
+    } = {}
 ) => {
     const currentWeight = getWeight(detectionType);
 
     if (currentWeight === null) {
-        return null;
+        return {
+            requestId,
+            activityId,
+            incidentId,
+            detectionType,
+            outcome: "UNKNOWN",
+            adjustment: 0
+        };
     }
 
     const newWeight = updateWeightFromFeedback({
@@ -28,6 +40,9 @@ export const applyFeedback = async (
     );
 
     return {
+        requestId,
+        activityId,
+        incidentId,
         detectionType,
         oldWeight: currentWeight,
         newWeight,

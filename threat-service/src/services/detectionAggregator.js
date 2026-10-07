@@ -16,43 +16,54 @@ export const addDetection = (detectionEvent) => {
     const correlationContext =
         addObservation(detectionEvent);
 
-
     /*
      * Existing request-level aggregation
      */
- if (!detectionStore.has(requestId)) {
-    detectionStore.set(requestId, {
-        requestId,
+    if (!detectionStore.has(requestId)) {
+        detectionStore.set(requestId, {
+            requestId,
 
-        correlationId:
-            detectionEvent.correlationId,
+            correlationId:
+                detectionEvent.correlationId,
 
-        activityId:
-            correlationContext?.activityId || null,
+            activityId:
+                correlationContext?.activityId || null,
 
-        correlationScore:
-            correlationContext?.correlationScore || 0,
+            correlationScore:
+                correlationContext?.correlationScore || 0,
 
-        confidence:
-            correlationContext?.confidence || "LOW",
+            confidence:
+                correlationContext?.confidence || "LOW",
 
-        sourceIp:
-            detectionEvent.sourceIp,
+            /*
+             * Preserve the host that generated
+             * the original traffic event.
+             */
+            hostId:
+                detectionEvent.hostId || null,
 
-        method:
-            detectionEvent.method,
+            /*
+             * Preserve the original event timestamp.
+             */
+            timestamp:
+                detectionEvent.timestamp ||
+                new Date().toISOString(),
 
-        path:
-            detectionEvent.path,
+            sourceIp:
+                detectionEvent.sourceIp,
 
-        detections: []
-    });
-}
+            method:
+                detectionEvent.method,
 
+            path:
+                detectionEvent.path,
+
+            detections: []
+        });
+    }
 
     const stored =
         detectionStore.get(requestId);
-
 
     /*
      * Add actual detections
@@ -60,23 +71,45 @@ export const addDetection = (detectionEvent) => {
     if (
         detectionEvent.detections?.length > 0
     ) {
-
         stored.detections.push(
             ...detectionEvent.detections
         );
     }
 
+    /*
+     * Preserve host/timestamp if the
+     * aggregated request already exists.
+     */
+    if (!stored.hostId && detectionEvent.hostId) {
+        stored.hostId =
+            detectionEvent.hostId;
+    }
+
+    if (
+        detectionEvent.timestamp &&
+        (
+            !stored.timestamp ||
+            new Date(detectionEvent.timestamp).getTime() <
+            new Date(stored.timestamp).getTime()
+        )
+    ) {
+        stored.timestamp =
+            detectionEvent.timestamp;
+    }
+
+    /*
+     * Update correlation information.
+     */
     if (correlationContext) {
-    stored.activityId =
-        correlationContext.activityId;
+        stored.activityId =
+            correlationContext.activityId;
 
-    stored.correlationScore =
-        correlationContext.correlationScore;
+        stored.correlationScore =
+            correlationContext.correlationScore;
 
-    stored.confidence =
-        correlationContext.confidence;
-}
-
+        stored.confidence =
+            correlationContext.confidence;
+    }
 
     /*
      * Log correlation activity
@@ -106,6 +139,8 @@ export const addDetection = (detectionEvent) => {
 
             confidence:
                 correlationContext.confidence,
+            correlationFactors: 
+                correlationContext.correlationFactors,
 
             firstSeen:
                 correlationContext.firstSeen,
@@ -115,17 +150,13 @@ export const addDetection = (detectionEvent) => {
         });
     }
 
-
     return stored;
 };
-
 
 export const removeDetection = (
     requestId
 ) => {
-
     detectionStore.delete(
         requestId
     );
-
 };

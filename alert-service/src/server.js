@@ -437,6 +437,52 @@ app.get(
                 LIMIT 24
             `);
 
+            const [crossLayerRows] = await pool.execute(`
+    SELECT
+        a.activity_id AS activityId,
+        a.correlation_score AS correlationScore,
+        a.correlation_confidence AS correlationConfidence,
+        a.incident_id AS incidentId,
+        a.request_id AS requestId,
+        i.source_ip AS sourceIp,
+        i.severity AS severity,
+        i.Threat_score AS threatScore,
+        i.created_at AS createdAt
+    FROM alerts a
+    JOIN incidents i
+        ON a.incident_id = i.incident_id
+    WHERE a.activity_id IS NOT NULL
+    ORDER BY a.created_at DESC
+    LIMIT 50
+`);
+
+            const totalActivities = crossLayerRows.length;
+
+            const highConfidence = crossLayerRows.filter(
+                (row) => row.correlationConfidence === "HIGH"
+            ).length;
+
+            const mediumConfidence = crossLayerRows.filter(
+                (row) => row.correlationConfidence === "MEDIUM"
+            ).length;
+
+            const lowConfidence = crossLayerRows.filter(
+                (row) => row.correlationConfidence === "LOW"
+            ).length;
+
+            const averageCorrelationScore =
+                totalActivities > 0
+                    ? Number(
+                        (
+                            crossLayerRows.reduce(
+                                (sum, row) =>
+                                    sum + Number(row.correlationScore || 0),
+                                0
+                            ) / totalActivities
+                        ).toFixed(2)
+                    )
+                    : 0;
+
             res.json({
                 success: true,
                 analytics: {
@@ -445,7 +491,16 @@ app.get(
                     topSourceIps: ipRows,
                     topPaths: pathRows,
                     attackTypes: attackRows,
-                    threatActivity: scoreRows
+                    threatActivity:     scoreRows,
+
+                     crossLayer: {
+                        totalActivities,
+                        highConfidence,
+                        mediumConfidence,
+                        lowConfidence,
+                        averageCorrelationScore,
+                        activities: crossLayerRows
+                    }
                 }
             });
         } catch (error) {

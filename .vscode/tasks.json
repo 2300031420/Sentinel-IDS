@@ -121,7 +121,7 @@
       "isBackground": true,
       "problemMatcher": []
     },
-     {
+    {
       "label": "adaptive scoring-service",
       "type": "shell",
       "command": "npm run dev",
@@ -141,7 +141,7 @@
       "isBackground": true,
       "problemMatcher": []
     },
-      {
+    {
       "label": "Response Service",
       "type": "shell",
       "command": "npm run dev",
@@ -170,7 +170,8 @@
         "adaptive scoring-service",
         "Response Service"
       ],
-      "dependsOrder": "parallel"
+      "dependsOrder": "parallel",
+      "problemMatcher": []
     }
   ]
 }

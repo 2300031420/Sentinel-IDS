@@ -3,16 +3,36 @@ const contexts = new Map();
 const WINDOW_MS =
     Number(process.env.CORRELATION_WINDOW_MS) || 60000;
 
-export const createContext = (activityId) => {
+const getEventTime = (observation) => {
+    if (!observation?.timestamp) {
+        return Date.now();
+    }
+
+    const timestamp =
+        new Date(observation.timestamp).getTime();
+
+    return Number.isNaN(timestamp)
+        ? Date.now()
+        : timestamp;
+};
+
+export const createContext = (
+    activityId,
+    timestamp = null
+) => {
     if (!contexts.has(activityId)) {
+        const eventTime = timestamp
+            ? getEventTime({ timestamp })
+            : Date.now();
+
         contexts.set(activityId, {
             activityId,
 
             webObservations: [],
             hostObservations: [],
 
-            firstSeen: Date.now(),
-            lastSeen: Date.now(),
+            firstSeen: eventTime,
+            lastSeen: eventTime,
 
             correlationScore: 0,
             confidence: "LOW"
@@ -30,14 +50,34 @@ export const addWebObservation = (
     activityId,
     observation
 ) => {
-    const context = createContext(activityId);
+    const timestamp =
+        observation.timestamp ||
+        new Date().toISOString();
+
+    const context = createContext(
+        activityId,
+        timestamp
+    );
+
+    const eventTime =
+        getEventTime({ timestamp });
 
     context.webObservations.push({
         ...observation,
-        timestamp: observation.timestamp || new Date().toISOString()
+        timestamp
     });
 
-    context.lastSeen = Date.now();
+    context.firstSeen =
+        Math.min(
+            context.firstSeen,
+            eventTime
+        );
+
+    context.lastSeen =
+        Math.max(
+            context.lastSeen,
+            eventTime
+        );
 
     return context;
 };
@@ -46,14 +86,34 @@ export const addHostObservation = (
     activityId,
     observation
 ) => {
-    const context = createContext(activityId);
+    const timestamp =
+        observation.timestamp ||
+        new Date().toISOString();
+
+    const context = createContext(
+        activityId,
+        timestamp
+    );
+
+    const eventTime =
+        getEventTime({ timestamp });
 
     context.hostObservations.push({
         ...observation,
-        timestamp: observation.timestamp || new Date().toISOString()
+        timestamp
     });
 
-    context.lastSeen = Date.now();
+    context.firstSeen =
+        Math.min(
+            context.firstSeen,
+            eventTime
+        );
+
+    context.lastSeen =
+        Math.max(
+            context.lastSeen,
+            eventTime
+        );
 
     return context;
 };

@@ -98,6 +98,7 @@ export const createIncident = async (threat) => {
 
                 correlationConfidence:
                     threat.correlationConfidence,
+                hostId: threat.hostId,
 
                 sourceIp: threat.sourceIp,
                 method: threat.method,

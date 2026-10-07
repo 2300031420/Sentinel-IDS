@@ -15,22 +15,75 @@ export const matchHostTelemetry = (telemetry) => {
     const matches = [];
 
     for (const [activityId, context] of contexts.entries()) {
-        const firstSeen = context.firstSeen;
-        const lastSeen = context.lastSeen;
 
+        /*
+         * Find the host associated with the
+         * web activity.
+         */
+        const webHostIds =
+            context.webObservations
+                .map(
+                    observation =>
+                        observation.hostId
+                )
+                .filter(Boolean);
+
+        /*
+         * A web activity without a host identity
+         * cannot be safely correlated with host
+         * telemetry.
+         */
+        if (
+            webHostIds.length === 0 ||
+            !telemetry.hostId
+        ) {
+            continue;
+        }
+
+        /*
+         * Host identity must match.
+         */
+        const sameHost =
+            webHostIds.includes(
+                telemetry.hostId
+            );
+
+        if (!sameHost) {
+            continue;
+        }
+
+        const firstSeen =
+            context.firstSeen;
+
+        const lastSeen =
+            context.lastSeen;
+
+        /*
+         * Telemetry must also fall within the
+         * configured correlation window.
+         */
         const afterActivity =
-            telemetryTime >= firstSeen - CORRELATION_WINDOW_MS;
+            telemetryTime >=
+            firstSeen - CORRELATION_WINDOW_MS;
 
         const beforeExpiry =
-            telemetryTime <= lastSeen + CORRELATION_WINDOW_MS;
+            telemetryTime <=
+            lastSeen + CORRELATION_WINDOW_MS;
 
-        if (afterActivity && beforeExpiry) {
+        if (
+            afterActivity &&
+            beforeExpiry
+        ) {
             addHostObservation(
                 activityId,
                 telemetry
             );
 
             matches.push(activityId);
+
+            console.log(
+                `[CROSS-LAYER] Host telemetry matched | Activity: ${activityId} | Host: ${telemetry.hostId}`
+            );
         }
     }
 

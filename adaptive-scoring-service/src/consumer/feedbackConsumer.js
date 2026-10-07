@@ -60,6 +60,7 @@ export const startFeedbackConsumer = async () => {
 
             for (const [, messages] of result) {
                 for (const [messageId, fields] of messages) {
+
                     const feedbackIndex =
                         fields.indexOf("feedback");
 
@@ -73,9 +74,26 @@ export const startFeedbackConsumer = async () => {
                         continue;
                     }
 
-                    const feedback = JSON.parse(
-                        fields[feedbackIndex + 1]
-                    );
+                    let feedback;
+
+                    try {
+                        feedback = JSON.parse(
+                            fields[feedbackIndex + 1]
+                        );
+                    } catch (error) {
+                        console.error(
+                            `[ADAPTIVE] Invalid feedback JSON ${messageId}:`,
+                            error.message
+                        );
+
+                        await redis.xack(
+                            FEEDBACK_STREAM,
+                            FEEDBACK_GROUP,
+                            messageId
+                        );
+
+                        continue;
+                    }
 
                     console.log(
                         "[ADAPTIVE] Feedback received:",
@@ -83,8 +101,20 @@ export const startFeedbackConsumer = async () => {
                     );
 
                     const result = await handleFeedback({
-                        detectionType: feedback.detectionType,
-                        responseStatus: feedback.responseStatus
+                        requestId:
+                            feedback.requestId || null,
+
+                        activityId:
+                            feedback.activityId || null,
+
+                        incidentId:
+                            feedback.incidentId || null,
+
+                        detectionType:
+                            feedback.detectionType,
+
+                        responseStatus:
+                            feedback.responseStatus
                     });
 
                     console.log(

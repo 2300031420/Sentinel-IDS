@@ -9,7 +9,8 @@ const TELEMETRY_INTERVAL =
 
 const collectAndPublish = async () => {
     try {
-        const telemetry = collectSystemTelemetry();
+        const telemetry =
+            await collectSystemTelemetry();
 
         console.log(
             "[HOST TELEMETRY] Collected:",
@@ -39,4 +40,5 @@ setInterval(
     collectAndPublish,
     TELEMETRY_INTERVAL
 );
+
 startTelemetryConsumer();
