@@ -25,10 +25,7 @@ export const publishFeedback = async ({
         JSON.stringify(feedback)
     );
 
-    console.log(
-        `[GATEWAY] Feedback published: ${messageId}`,
-        feedback
-    );
+ console.log("[GATEWAY] Feedback published successfully");
 
     return messageId;
 };

@@ -1,6 +1,26 @@
+
 import pool from "../db/mysql.js";
+import {
+    calculateEvidenceHash,
+    serializeEvidence
+} from "../evidence/evidenceBuilder.js";
 
 export const saveEvidence = async (evidence) => {
+    const { integrity, ...payload } = evidence;
+
+    // Recalculate instead of trusting a hash received through Redis.
+    const evidencePayload = serializeEvidence(payload);
+    const evidenceHash = calculateEvidenceHash(payload);
+
+    if (
+        integrity?.algorithm !== "SHA-256" ||
+        integrity?.hash !== evidenceHash
+    ) {
+        throw new Error(
+            `Evidence integrity check failed before storage: ${evidence.evidenceId}`
+        );
+    }
+
     const query = `
         INSERT INTO evidence (
             evidence_id,
@@ -24,9 +44,14 @@ export const saveEvidence = async (evidence) => {
             host_architecture,
             host_telemetry_timestamp,
             incident_status,
-            evidence_timestamp
+            evidence_timestamp,
+            evidence_hash,
+            hash_algorithm,
+            evidence_payload
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
     `;
 
     const values = [
@@ -36,43 +61,39 @@ export const saveEvidence = async (evidence) => {
         evidence.correlationId,
         evidence.activityId,
 
-        evidence.trigger?.severity || "UNKNOWN",
-        evidence.trigger?.threatScore || 0,
-        evidence.trigger?.correlationScore || 0,
-        evidence.trigger?.correlationConfidence || "LOW",
+        payload.trigger?.severity || "UNKNOWN",
+        payload.trigger?.threatScore ?? 0,
+        payload.trigger?.correlationScore ?? 0,
+        payload.trigger?.correlationConfidence || "LOW",
 
-        evidence.request?.sourceIp || null,
-        evidence.request?.method || null,
-        evidence.request?.path || null,
+        payload.request?.sourceIp || null,
+        payload.request?.method || null,
+        payload.request?.path || null,
 
-        JSON.stringify(
-            evidence.detections || []
-        ),
+        JSON.stringify(payload.detections || []),
 
-        evidence.hostTelemetry?.hostId || null,
-        evidence.hostTelemetry?.cpuUsage ?? null,
-        evidence.hostTelemetry?.memoryUsage ?? null,
-        evidence.hostTelemetry?.processCount ?? null,
-        evidence.hostTelemetry?.platform || null,
-        evidence.hostTelemetry?.architecture || null,
+        payload.hostTelemetry?.hostId || null,
+        payload.hostTelemetry?.cpuUsage ?? null,
+        payload.hostTelemetry?.memoryUsage ?? null,
+        payload.hostTelemetry?.processCount ?? null,
+        payload.hostTelemetry?.platform || null,
+        payload.hostTelemetry?.architecture || null,
 
-        evidence.hostTelemetry?.timestamp
-            ? new Date(
-                evidence.hostTelemetry.timestamp
-            )
+        payload.hostTelemetry?.timestamp
+            ? new Date(payload.hostTelemetry.timestamp)
             : null,
 
-        evidence.incidentStatus || null,
+        payload.incidentStatus || null,
+        new Date(payload.timestamp),
 
-        new Date(evidence.timestamp)
+        evidenceHash,
+        "SHA-256",
+        evidencePayload
     ];
 
-    await pool.execute(
-        query,
-        values
-    );
+    await pool.execute(query, values);
 
     console.log(
-        `[EVIDENCE] Evidence stored: ${evidence.evidenceId}`
+        `[EVIDENCE] Evidence stored with verified hash: ${evidence.evidenceId}`
     );
 };

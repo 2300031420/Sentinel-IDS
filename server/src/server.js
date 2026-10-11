@@ -1,13 +1,11 @@
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-import { connectionDatabase } from "./config/db.js";
-
 dotenv.config();
 
 const app = express();
-
 const PORT = process.env.PORT || 5000;
 
 app.disable("x-powered-by");
@@ -17,6 +15,7 @@ app.use(
         origin: "http://localhost:3000"
     })
 );
+
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -34,12 +33,6 @@ app.get("/health", (req, res) => {
     });
 });
 
-const startServer = async () => {
-    await connectionDatabase();
-
-    app.listen(PORT, () => {
-        console.log(`SentinelIDS server running on port ${PORT}`);
-    });
-};
-
-startServer();
+app.listen(PORT, () => {
+    console.log(`SentinelIDS server running on port ${PORT}`);
+});

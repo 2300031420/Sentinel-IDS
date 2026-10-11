@@ -1,4 +1,5 @@
-import crypto from "crypto";
+
+import crypto from "node:crypto";
 
 export const shouldPreserveEvidence = (incident) => {
     if (!incident) {
@@ -11,11 +12,39 @@ export const shouldPreserveEvidence = (incident) => {
     );
 };
 
+// Sort object keys recursively so equivalent evidence always
+// produces the same JSON representation.
+const canonicalize = (value) => {
+    if (Array.isArray(value)) {
+        return value.map(canonicalize);
+    }
+
+    if (value !== null && typeof value === "object") {
+        return Object.keys(value)
+            .sort()
+            .reduce((result, key) => {
+                result[key] = canonicalize(value[key]);
+                return result;
+            }, {});
+    }
+
+    return value;
+};
+
+export const serializeEvidence = (evidence) =>
+    JSON.stringify(canonicalize(evidence));
+
+export const calculateEvidenceHash = (evidence) =>
+    crypto
+        .createHash("sha256")
+        .update(serializeEvidence(evidence), "utf8")
+        .digest("hex");
+
 export const buildEvidencePackage = (
     incident,
     hostTelemetry = null
 ) => {
-    return {
+    const evidence = {
         evidenceId: crypto.randomUUID(),
 
         incidentId: incident.incidentId,
@@ -55,4 +84,12 @@ export const buildEvidencePackage = (
 
         incidentStatus: incident.status
     };
+
+    // Hash the complete evidence object before adding metadata.
+    evidence.integrity = {
+        algorithm: "SHA-256",
+        hash: calculateEvidenceHash(evidence)
+    };
+
+    return evidence;
 };

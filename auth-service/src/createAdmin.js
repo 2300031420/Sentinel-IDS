@@ -1,25 +1,41 @@
+
 import bcrypt from "bcrypt";
+import dotenv from "dotenv";
 import pool from "./config/database.js";
 
-const name = "Sentinel Admin";
-const email = "admin@sentinelids.com";
-const password = "Admin@sentinel2005";
+dotenv.config();
+
+const name = process.env.ADMIN_NAME;
+const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+const password = process.env.ADMIN_PASSWORD;
+
+if (!name || !email || !password) {
+    throw new Error(
+        "ADMIN_NAME, ADMIN_EMAIL and ADMIN_PASSWORD must be configured"
+    );
+}
+
+if (password.length < 12) {
+    throw new Error("ADMIN_PASSWORD must be at least 12 characters");
+}
 
 try {
-  const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 12);
 
-  await pool.query(
-    `INSERT INTO users (name, email, password_hash, role)
-     VALUES (?, ?, ?, ?)`,
-    [name, email, passwordHash, "admin"]
-  );
+    const [result] = await pool.execute(
+        `INSERT INTO users (name, email, password_hash, role)
+         VALUES (?, ?, ?, ?)`,
+        [name, email, passwordHash, "admin"]
+    );
 
-  console.log("✅ Admin user created");
-  console.log(`Email: ${email}`);
-  console.log(`Password: ${password}`);
-
-  process.exit(0);
+    console.log(`Admin user created with ID ${result.insertId}`);
 } catch (error) {
-  console.error("❌ Failed to create admin:", error.message);
-  process.exit(1);
+    console.error(
+        "Admin creation failed:",
+        error.code || "DB_ERROR"
+    );
+
+    process.exitCode = 1;
+} finally {
+    await pool.end();
 }

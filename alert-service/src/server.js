@@ -93,9 +93,14 @@ io.use((socket, next) => {
         .update(timestamp)
         .digest("hex");
 
-    const valid = crypto.timingSafeEqual(
-        Buffer.from(signature),
-        Buffer.from(expectedSignature)
+   const providedSignature = Buffer.from(signature);
+const expectedSignatureBuffer = Buffer.from(expectedSignature);
+
+const valid =
+    providedSignature.length === expectedSignatureBuffer.length &&
+    crypto.timingSafeEqual(
+        providedSignature,
+        expectedSignatureBuffer
     );
 
     if (!valid) {

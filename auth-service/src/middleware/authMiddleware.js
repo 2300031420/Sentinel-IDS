@@ -21,8 +21,7 @@ export const authenticate = (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error("Authentication error:", error.message);
-
+    console.warn("[AUTH] Invalid or expired session");
     return res.status(401).json({
       success: false,
       message: "Invalid or expired session",
