@@ -9,7 +9,13 @@ export const publishDetectionResults = async ({
 }) => {
     const detectionEvent = {
         requestId: event.requestId,
-        timestamp: new Date().toISOString(),
+        correlationId: event.correlationId,
+
+        // Preserve the host that generated the traffic
+        hostId: event.hostId,
+
+        timestamp: event.timestamp ||
+            new Date().toISOString(),
 
         sourceIp: event.sourceIp,
         method: event.method,
@@ -28,6 +34,6 @@ export const publishDetectionResults = async ({
     );
 
     console.log(
-        `[DETECTION BUS] Published ${event.requestId}`
+        `[DETECTION BUS] Published ${event.requestId} | Host: ${event.hostId}`
     );
 };

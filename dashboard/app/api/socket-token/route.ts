@@ -1,36 +1,45 @@
-import { NextResponse } from "next/server";
+
+import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { requireAuth } from "@/lib/requireAuth";
 
-export async function GET() {
-    const secret = process.env.ALERT_API_KEY;
+export async function GET(request: NextRequest) {
+  const auth = await requireAuth(request);
 
-    if (!secret) {
-        console.error("[SOCKET AUTH] ALERT_API_KEY is missing");
+  if (!auth.ok) {
+    return auth.response;
+  }
 
-        return NextResponse.json(
-            {
-                success: false,
-                message: "Socket authentication is not configured",
-            },
-            { status: 500 }
-        );
-    }
+  const secret = process.env.ALERT_API_KEY;
 
-    const timestamp = Date.now().toString();
+  if (!secret) {
+    console.error("[SOCKET AUTH] ALERT_API_KEY is missing");
 
-    const signature = crypto
-        .createHmac("sha256", secret)
-        .update(timestamp)
-        .digest("hex");
-
-    const token = `${timestamp}.${signature}`;
-
-    console.log(
-        `[SOCKET AUTH] Token generated at ${timestamp}`
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Socket authentication is not configured",
+      },
+      { status: 500 }
     );
+  }
 
-    return NextResponse.json({
-        success: true,
-        token,
-    });
+  const timestamp = Date.now().toString();
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(timestamp)
+    .digest("hex");
+
+  return NextResponse.json(
+    {
+      success: true,
+      token: `${timestamp}.${signature}`,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store",
+        "Pragma": "no-cache",
+      },
+    }
+  );
 }

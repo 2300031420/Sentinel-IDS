@@ -1,18 +1,27 @@
 import pool from "../config/database.js";
 
+
 export const markProcessing = async (alertId) => {
     const query = `
         UPDATE alerts
         SET status = 'PROCESSING'
         WHERE alert_id = ?
+          AND status IN ('PENDING', 'FAILED')
     `;
 
-    await pool.execute(query, [alertId]);
+    const [result] = await pool.execute(query, [alertId]);
 
-    console.log(
-        `[ALERT] ${alertId} → PROCESSING`
-    );
+    if (result.affectedRows !== 1) {
+        console.warn(
+            `[ALERT] Could not claim ${alertId}; it may already be processing or terminal`
+        );
+        return false;
+    }
+
+    console.log(`[ALERT] ${alertId} → PROCESSING`);
+    return true;
 };
+
 
 
 export const markSent = async (alertId) => {

@@ -1,11 +1,17 @@
 import redis from "../config/redis.js";
 import { analyzeRequest } from "../engine/detectionEngine.js";
 import { publishDetectionResults } from "../service/detectionPublisher.js";
-const STREAM_NAME = process.env.REDIS_STREAM || "ids:traffic";
+
+const STREAM_NAME =
+    process.env.REDIS_STREAM || "ids:traffic";
+
 const GROUP_NAME =
-    process.env.REDIS_GROUP || "signature-detection-group";
+    process.env.REDIS_GROUP ||
+    "signature-detection-group";
+
 const CONSUMER_NAME =
-    process.env.REDIS_CONSUMER || "signature-service-1";
+    process.env.REDIS_CONSUMER ||
+    "signature-service-1";
 
 const createConsumerGroup = async () => {
     try {
@@ -59,9 +65,16 @@ export const startTrafficConsumer = async () => {
 
             for (const [, messages] of result) {
                 for (const [messageId, fields] of messages) {
-                    const eventIndex = fields.indexOf("event");
+                    const eventIndex =
+                        fields.indexOf("event");
 
                     if (eventIndex === -1) {
+                        await redis.xack(
+                            STREAM_NAME,
+                            GROUP_NAME,
+                            messageId
+                        );
+
                         continue;
                     }
 
@@ -69,12 +82,17 @@ export const startTrafficConsumer = async () => {
                         fields[eventIndex + 1]
                     );
 
-                    const detections = analyzeRequest(event);
-                    
+                    const detections =
+                        analyzeRequest(event);
 
                     console.log(
                         "\n[SIGNATURE] Request:",
                         event.requestId
+                    );
+
+                    console.log(
+                        "[SIGNATURE] Host ID:",
+                        event.hostId
                     );
 
                     if (detections.length === 0) {
@@ -87,6 +105,7 @@ export const startTrafficConsumer = async () => {
                             detections
                         );
                     }
+
                     await publishDetectionResults({
                         event,
                         detections

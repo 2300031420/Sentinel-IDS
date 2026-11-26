@@ -79,7 +79,7 @@ io.use((socket, next) => {
     if (
         !Number.isFinite(tokenAge) ||
         tokenAge < 0 ||
-       tokenAge > 300_000
+        tokenAge > 60_000
     ) {
         console.warn(
             `[SECURITY] Expired Socket.IO authentication token`
@@ -87,15 +87,25 @@ io.use((socket, next) => {
 
         return next(new Error("Authentication token expired"));
     }
+    if (!process.env.ALERT_API_KEY) {
+    console.error("[SECURITY] ALERT_API_KEY is not configured");
+    return next(new Error("Socket authentication unavailable"));
+}
+
 
     const expectedSignature = crypto
         .createHmac("sha256", process.env.ALERT_API_KEY)
         .update(timestamp)
         .digest("hex");
 
-    const valid = crypto.timingSafeEqual(
-        Buffer.from(signature),
-        Buffer.from(expectedSignature)
+   const providedSignature = Buffer.from(signature);
+const expectedSignatureBuffer = Buffer.from(expectedSignature);
+
+const valid =
+    providedSignature.length === expectedSignatureBuffer.length &&
+    crypto.timingSafeEqual(
+        providedSignature,
+        expectedSignatureBuffer
     );
 
     if (!valid) {
@@ -138,7 +148,44 @@ app.get("/health", (req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+app.get(
+    "/api/incidents",
+    alertApiLimiter,
+    authenticateApiKey,
+    async (req, res, next) => {
+        try {
+            const [incidents] = await pool.execute(`
+                SELECT
+                    incident_id,
+                    request_id,
+                    severity,
+                    threat_score AS threatScore,
+                    source_ip AS sourceIp,
+                    method,
+                    Path AS path,
+                    detections,
+                    created_at
+                FROM incidents
+                ORDER BY created_at DESC
+                LIMIT 100
+            `);
 
+            res.json({
+                success: true,
+                count: incidents.length,
+                incidents
+            });
+
+        } catch (error) {
+            console.error(
+                "[INCIDENT API] Failed to fetch incidents:",
+                error.message
+            );
+
+            next(error);
+        }
+    }
+);
 // Acknowledge alert
 app.patch(
     "/api/alerts/:alertId/acknowledge",
@@ -149,16 +196,26 @@ app.patch(
         const { alertId } = req.params;
         const parsedAlertId = alertIdSchema.safeParse(alertId);
 
-if (!parsedAlertId.success) {
-    return res.status(400).json({
-        success: false,
-        message: "Invalid alert ID"
-    });
-}
+        if (!parsedAlertId.success) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid alert ID"
+            });
+        }
 
         try {
 
             await markAcknowledged(alertId);
+
+            io.emit("alert-acknowledged", {
+                alertId,
+                status: "ACKNOWLEDGED",
+                acknowledgedAt: new Date().toISOString()
+            });
+
+            console.log(
+                `[ALERT WS] Alert acknowledged: ${alertId}`
+            );
 
             res.json({
                 success: true,
@@ -208,6 +265,9 @@ app.get("/api/alerts", authenticateApiKey, alertApiLimiter, async (req, res) => 
         a.alert_id,
         a.incident_id,
         a.request_id,
+        a.activity_id,
+a.correlation_score,
+a.correlation_confidence,
         a.severity,
         a.channel,
         a.status,
@@ -300,18 +360,176 @@ app.get("/api/alerts", authenticateApiKey, alertApiLimiter, async (req, res) => 
         });
     }
 });
+app.get(
+    "/api/analytics",
+    alertApiLimiter,
+    authenticateApiKey,
+    async (req, res, next) => {
+        try {
+            const [severityRows] = await pool.execute(`
+                SELECT
+                    severity,
+                    COUNT(*) AS count
+                FROM alerts
+                GROUP BY severity
+                ORDER BY count DESC
+            `);
+
+            const [statusRows] = await pool.execute(`
+                SELECT
+                    status,
+                    COUNT(*) AS count
+                FROM alerts
+                GROUP BY status
+                ORDER BY count DESC
+            `);
+
+            const [ipRows] = await pool.execute(`
+                SELECT
+                    i.source_ip AS sourceIp,
+                    COUNT(*) AS count
+                FROM alerts a
+                JOIN incidents i
+                    ON a.incident_id = i.incident_id
+                GROUP BY i.source_ip
+                ORDER BY count DESC
+                LIMIT 10
+            `);
+
+            const [pathRows] = await pool.execute(`
+                SELECT
+                    i.Path AS path,
+                    COUNT(*) AS count
+                FROM alerts a
+                JOIN incidents i
+                    ON a.incident_id = i.incident_id
+                GROUP BY i.Path
+                ORDER BY count DESC
+                LIMIT 10
+            `);
+
+            const [attackRows] = await pool.execute(`
+                SELECT
+                    JSON_UNQUOTE(
+                        JSON_EXTRACT(
+                            jt.detection,
+                            '$.type'
+                        )
+                    ) AS attackType,
+                    COUNT(*) AS count
+                FROM incidents i
+                JOIN JSON_TABLE(
+                    i.detections,
+                    '$[*]' COLUMNS (
+                        detection JSON PATH '$'
+                    )
+                ) jt
+                GROUP BY attackType
+                ORDER BY count DESC
+            `);
+
+            const [scoreRows] = await pool.execute(`
+                SELECT
+                    DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00') AS hour,
+                    COUNT(*) AS alerts,
+                    AVG(threatScore) AS averageScore,
+                    MAX(threatScore) AS maxScore
+                FROM (
+                    SELECT
+                        a.created_at,
+                        i.Threat_score AS threatScore
+                    FROM alerts a
+                    JOIN incidents i
+                        ON a.incident_id = i.incident_id
+                ) data
+                GROUP BY hour
+                ORDER BY hour ASC
+                LIMIT 24
+            `);
+
+            const [crossLayerRows] = await pool.execute(`
+    SELECT
+        a.activity_id AS activityId,
+        a.correlation_score AS correlationScore,
+        a.correlation_confidence AS correlationConfidence,
+        a.incident_id AS incidentId,
+        a.request_id AS requestId,
+        i.source_ip AS sourceIp,
+        i.severity AS severity,
+        i.Threat_score AS threatScore,
+        i.created_at AS createdAt
+    FROM alerts a
+    JOIN incidents i
+        ON a.incident_id = i.incident_id
+    WHERE a.activity_id IS NOT NULL
+    ORDER BY a.created_at DESC
+    LIMIT 50
+`);
+
+            const totalActivities = crossLayerRows.length;
+
+            const highConfidence = crossLayerRows.filter(
+                (row) => row.correlationConfidence === "HIGH"
+            ).length;
+
+            const mediumConfidence = crossLayerRows.filter(
+                (row) => row.correlationConfidence === "MEDIUM"
+            ).length;
+
+            const lowConfidence = crossLayerRows.filter(
+                (row) => row.correlationConfidence === "LOW"
+            ).length;
+
+            const averageCorrelationScore =
+                totalActivities > 0
+                    ? Number(
+                        (
+                            crossLayerRows.reduce(
+                                (sum, row) =>
+                                    sum + Number(row.correlationScore || 0),
+                                0
+                            ) / totalActivities
+                        ).toFixed(2)
+                    )
+                    : 0;
+
+            res.json({
+                success: true,
+                analytics: {
+                    severity: severityRows,
+                    status: statusRows,
+                    topSourceIps: ipRows,
+                    topPaths: pathRows,
+                    attackTypes: attackRows,
+                    threatActivity:     scoreRows,
+
+                     crossLayer: {
+                        totalActivities,
+                        highConfidence,
+                        mediumConfidence,
+                        lowConfidence,
+                        averageCorrelationScore,
+                        activities: crossLayerRows
+                    }
+                }
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
 
 app.get("/api/alerts/:alertId", authenticateApiKey, alertApiLimiter, async (req, res) => {
 
     const { alertId } = req.params;
     const parsedAlertId = alertIdSchema.safeParse(alertId);
 
-if (!parsedAlertId.success) {
-    return res.status(400).json({
-        success: false,
-        message: "Invalid alert ID"
-    });
-}
+    if (!parsedAlertId.success) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid alert ID"
+        });
+    }
 
     try {
 
@@ -321,6 +539,9 @@ if (!parsedAlertId.success) {
         a.alert_id,
         a.incident_id,
         a.request_id,
+        a.activity_id,
+a.correlation_score,
+a.correlation_confidence,
         a.severity,
         a.channel,
         a.status,

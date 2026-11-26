@@ -2,10 +2,10 @@
   "name": "signature-service",
   "version": "1.0.0",
   "description": "",
-  "type":"module",
+  "type": "module",
   "main": "index.js",
   "scripts": {
-     "dev": "nodemon src/server.js",
+    "dev": "node --watch src/server.js",
     "start": "node src/server.js"
   },
   "keywords": [],
@@ -14,8 +14,5 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "ioredis": "^6.0.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.14"
   }
 }

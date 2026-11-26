@@ -1,20 +1,59 @@
-const SEVERITY_WEIGHTS = {
+
+const SEVERITY_WEIGHTS = Object.freeze({
     LOW: 10,
     MEDIUM: 20,
     HIGH: 30,
     CRITICAL: 40
-};
+});
 
-const SEVERITY_RANK = {
+const SEVERITY_RANK = Object.freeze({
     NONE: 0,
     LOW: 1,
     MEDIUM: 2,
     HIGH: 3,
     CRITICAL: 4
-};
+});
 
-export const calculateThreatScore = (detections) => {
-    if (!detections || detections.length === 0) {
+const VALID_SEVERITIES = new Set([
+    "LOW",
+    "MEDIUM",
+    "HIGH",
+    "CRITICAL"
+]);
+
+const isValidDetection = (detection) =>
+    detection !== null &&
+    typeof detection === "object" &&
+    !Array.isArray(detection) &&
+    typeof detection.type === "string" &&
+    detection.type.trim().length > 0 &&
+    detection.type.length <= 100 &&
+    VALID_SEVERITIES.has(detection.severity) &&
+    Number.isFinite(detection.score) &&
+    detection.score >= 0 &&
+    detection.score <= 100;
+
+export const calculateThreatScore = (
+    detections,
+    adaptiveWeights = {}
+) => {
+    if (!Array.isArray(detections)) {
+        throw new TypeError(
+            "Threat detections must be an array"
+        );
+    }
+
+    if (
+        adaptiveWeights === null ||
+        typeof adaptiveWeights !== "object" ||
+        Array.isArray(adaptiveWeights)
+    ) {
+        throw new TypeError(
+            "Adaptive weights must be an object"
+        );
+    }
+
+    if (detections.length === 0) {
         return {
             score: 0,
             severity: "NONE"
@@ -25,10 +64,35 @@ export const calculateThreatScore = (detections) => {
     let highestSeverity = "NONE";
 
     for (const detection of detections) {
-        score +=
-            detection.score ||
-            SEVERITY_WEIGHTS[detection.severity] ||
-            0;
+        if (!isValidDetection(detection)) {
+            throw new TypeError(
+                "Invalid detection record supplied to threat scorer"
+            );
+        }
+
+        const adaptiveWeight =
+            adaptiveWeights[detection.type];
+
+        if (
+            adaptiveWeight !== undefined &&
+            (
+                typeof adaptiveWeight !== "number" ||
+                !Number.isFinite(adaptiveWeight) ||
+                adaptiveWeight < 0 ||
+                adaptiveWeight > 100
+            )
+        ) {
+            throw new TypeError(
+                "Invalid adaptive weight supplied to threat scorer"
+            );
+        }
+
+        const detectionScore =
+            adaptiveWeight ??
+            detection.score ??
+            SEVERITY_WEIGHTS[detection.severity];
+
+        score += detectionScore;
 
         if (
             SEVERITY_RANK[detection.severity] >
@@ -52,7 +116,6 @@ export const calculateThreatScore = (detections) => {
         severity = "LOW";
     }
 
-    // Never downgrade a detection's explicit severity.
     if (
         SEVERITY_RANK[highestSeverity] >
         SEVERITY_RANK[severity]
