@@ -379,10 +379,5 @@ The system is a security monitoring and threat detection research project and sh
 
 ---
 
-## 📜 License
-
-Specify the applicable open-source license before distributing this project.
-
----
 
 **Built with a focus on distributed security monitoring, intelligent threat detection, and cross-layer security analysis.**
