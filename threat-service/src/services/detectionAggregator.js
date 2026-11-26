@@ -58,7 +58,8 @@ export const addDetection = (detectionEvent) => {
             path:
                 detectionEvent.path,
 
-            detections: []
+            detections: [],
+            detectionKeys: new Set()
         });
     }
 
@@ -68,13 +69,32 @@ export const addDetection = (detectionEvent) => {
     /*
      * Add actual detections
      */
-    if (
-        detectionEvent.detections?.length > 0
-    ) {
-        stored.detections.push(
-            ...detectionEvent.detections
-        );
+  /*
+ * Add unique detections only.
+ */
+if (Array.isArray(detectionEvent.detections)) {
+    for (const detection of detectionEvent.detections) {
+        if (
+            !detection ||
+            typeof detection.type !== "string" ||
+            typeof detection.severity !== "string"
+        ) {
+            continue;
+        }
+
+        const key = JSON.stringify([
+            detection.type,
+            detection.severity,
+            detection.score ?? null,
+            detection.evidence ?? null
+        ]);
+
+        if (!stored.detectionKeys.has(key)) {
+            stored.detectionKeys.add(key);
+            stored.detections.push(detection);
+        }
     }
+}
 
     /*
      * Preserve host/timestamp if the

@@ -1,0 +1,393 @@
+
+import redis from "../config/redis.js";
+import { calculateThreatScore } from "../services/threatScorer.js";
+import { getAdaptiveWeights } from "../services/adaptiveWeights.js";
+import {
+    addDetection,
+    removeDetection
+} from "../services/detectionAggregator.js";
+
+const DETECTION_STREAM =
+    process.env.DETECTION_STREAM || "ids:detections";
+
+const THREAT_STREAM =
+    process.env.THREAT_STREAM || "ids:threats";
+
+const GROUP_NAME =
+    process.env.REDIS_GROUP || "threat-scoring-group";
+
+const CONSUMER_NAME =
+    process.env.REDIS_CONSUMER || "threat-service-1";
+
+const WINDOW_MS = 2000;
+const RECOVERY_IDLE_MS = 10000;
+const RECOVERY_INTERVAL_MS = 5000;
+const RECOVERY_BATCH_SIZE = 10;
+
+const timers = new Map();
+const pendingMessages = new Map();
+
+let stopping = false;
+let recoveryTimer = null;
+let recoveryInProgress = false;
+
+const sleep = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+const createConsumerGroup = async () => {
+    try {
+        await redis.xgroup(
+            "CREATE",
+            DETECTION_STREAM,
+            GROUP_NAME,
+            "0",
+            "MKSTREAM"
+        );
+
+        console.log(
+            `[THREAT] Consumer group "${GROUP_NAME}" created`
+        );
+    } catch (error) {
+        if (error.message?.includes("BUSYGROUP")) {
+            console.log(
+                `[THREAT] Consumer group "${GROUP_NAME}" already exists`
+            );
+            return;
+        }
+
+        throw error;
+    }
+};
+
+const publishThreat = async (threat) => {
+    await redis.xadd(
+        THREAT_STREAM,
+        "*",
+        "threat",
+        JSON.stringify(threat)
+    );
+
+    console.log(
+        `[THREAT BUS] Published ${threat.requestId} | Host: ${threat.hostId}`
+    );
+};
+
+/*
+ * Parse and validate the stream envelope.
+ * Individual detection validation remains in the scorer and
+ * correlation engine.
+ */
+const parseDetectionEvent = (fields) => {
+    const detectionIndex = fields.indexOf("detection");
+
+    if (
+        detectionIndex < 0 ||
+        typeof fields[detectionIndex + 1] !== "string"
+    ) {
+        return null;
+    }
+
+    let event;
+
+    try {
+        event = JSON.parse(fields[detectionIndex + 1]);
+    } catch {
+        return null;
+    }
+
+    if (
+        !event ||
+        typeof event !== "object" ||
+        Array.isArray(event) ||
+        typeof event.requestId !== "string" ||
+        !event.requestId.trim() ||
+        event.requestId.length > 200 ||
+        !Array.isArray(event.detections)
+    ) {
+        return null;
+    }
+
+    return event;
+};
+
+/*
+ * Add a source message to the request's in-memory aggregation.
+ */
+const bufferDetection = (event, messageId) => {
+    const aggregated = addDetection(event);
+
+    if (!aggregated) {
+        throw new Error("DETECTION_AGGREGATION_FAILED");
+    }
+
+    if (!pendingMessages.has(event.requestId)) {
+        pendingMessages.set(event.requestId, {
+            ...aggregated,
+            messages: [],
+            messageIds: new Set()
+        });
+    }
+
+    const pending = pendingMessages.get(event.requestId);
+
+    // Do not buffer the same Redis message twice.
+    if (!pending.messageIds.has(messageId)) {
+        pending.messageIds.add(messageId);
+        pending.messages.push(messageId);
+    }
+
+    if (timers.has(event.requestId)) {
+        clearTimeout(timers.get(event.requestId));
+    }
+
+    const timer = setTimeout(() => {
+        void finalizeDetection(event.requestId);
+    }, WINDOW_MS);
+
+    timers.set(event.requestId, timer);
+};
+
+/*
+ * Finalize one request. Source messages are acknowledged only after
+ * threat publication succeeds, or after a valid no-threat result.
+ */
+const finalizeDetection = async (requestId) => {
+    const aggregated = pendingMessages.get(requestId);
+
+    if (!aggregated) {
+        return;
+    }
+
+    try {
+        const adaptiveWeights = await getAdaptiveWeights();
+
+        const result = calculateThreatScore(
+            aggregated.detections,
+            adaptiveWeights
+        );
+
+        const threat = {
+            requestId: aggregated.requestId,
+            correlationId: aggregated.correlationId,
+            activityId: aggregated.activityId,
+            correlationScore: aggregated.correlationScore,
+            correlationConfidence: aggregated.confidence,
+            hostId: aggregated.hostId,
+            timestamp:
+                aggregated.timestamp || new Date().toISOString(),
+            sourceIp: aggregated.sourceIp,
+            method: aggregated.method,
+            path: aggregated.path,
+            detected: aggregated.detections.length > 0,
+            detections: aggregated.detections,
+            score: result.score,
+            severity: result.severity
+        };
+
+        if (threat.detected) {
+            await publishThreat(threat);
+        } else {
+            console.log(
+                `[THREAT] No threat detected for ${requestId}`
+            );
+        }
+
+        for (const messageId of aggregated.messages) {
+            await redis.xack(
+                DETECTION_STREAM,
+                GROUP_NAME,
+                messageId
+            );
+        }
+
+        pendingMessages.delete(requestId);
+        timers.delete(requestId);
+        removeDetection(requestId);
+
+    } catch (error) {
+        console.error(
+            `[THREAT] Finalization failed for ${requestId}:`,
+            error.code || error.message || "FINALIZATION_ERROR"
+        );
+
+        // Keep buffered work for a later retry.
+        if (!stopping && pendingMessages.has(requestId)) {
+            const timer = setTimeout(() => {
+                void finalizeDetection(requestId);
+            }, RECOVERY_INTERVAL_MS);
+
+            timers.set(requestId, timer);
+        }
+    }
+};
+
+/*
+ * Recover messages idle in the pending-entry list.
+ *
+ * XAUTOCLAIM returns entries assigned to another consumer that have
+ * exceeded the idle threshold. Recovered entries are re-buffered.
+ */
+const recoverPendingMessages = async () => {
+    if (recoveryInProgress || stopping) {
+        return;
+    }
+
+    recoveryInProgress = true;
+
+    try {
+        let cursor = "0-0";
+
+        do {
+            const result = await redis.xautoclaim(
+                DETECTION_STREAM,
+                GROUP_NAME,
+                CONSUMER_NAME,
+                RECOVERY_IDLE_MS,
+                cursor,
+                "COUNT",
+                RECOVERY_BATCH_SIZE
+            );
+
+            cursor = result[0];
+
+            const messages = result[1] || [];
+
+            for (const [messageId, fields] of messages) {
+                if (stopping) {
+                    break;
+                }
+
+                const event = parseDetectionEvent(fields);
+
+                if (!event || event.detections.length === 0) {
+                    console.warn(
+                        `[THREAT] Discarding invalid recovered message ${messageId}`
+                    );
+
+                    await redis.xack(
+                        DETECTION_STREAM,
+                        GROUP_NAME,
+                        messageId
+                    );
+
+                    continue;
+                }
+
+                bufferDetection(event, messageId);
+            }
+
+            if (cursor === "0-0" || messages.length === 0) {
+                break;
+            }
+        } while (!stopping);
+
+    } catch (error) {
+        console.error(
+            "[THREAT] Pending-message recovery failed:",
+            error.code || "RECOVERY_ERROR"
+        );
+    } finally {
+        recoveryInProgress = false;
+    }
+};
+
+export const startDetectionConsumer = async () => {
+    await createConsumerGroup();
+
+    console.log(
+        `[THREAT] Listening to ${DETECTION_STREAM}`
+    );
+
+    await recoverPendingMessages();
+
+    recoveryTimer = setInterval(() => {
+        void recoverPendingMessages();
+    }, RECOVERY_INTERVAL_MS);
+
+    recoveryTimer.unref();
+
+    while (!stopping) {
+        try {
+            const result = await redis.xreadgroup(
+                "GROUP",
+                GROUP_NAME,
+                CONSUMER_NAME,
+                "COUNT",
+                10,
+                "BLOCK",
+                5000,
+                "STREAMS",
+                DETECTION_STREAM,
+                ">"
+            );
+
+            if (!result) {
+                continue;
+            }
+
+            for (const [, messages] of result) {
+                for (const [messageId, fields] of messages) {
+                    if (stopping) {
+                        break;
+                    }
+
+                    const event = parseDetectionEvent(fields);
+
+                    if (!event || event.detections.length === 0) {
+                        console.warn(
+                            `[THREAT] Discarding invalid message ${messageId}`
+                        );
+
+                        await redis.xack(
+                            DETECTION_STREAM,
+                            GROUP_NAME,
+                            messageId
+                        );
+
+                        continue;
+                    }
+
+                    bufferDetection(event, messageId);
+                }
+            }
+        } catch (error) {
+            console.error(
+                "[THREAT] Consumer read failed:",
+                error.code || "CONSUMER_READ_ERROR"
+            );
+
+            if (!stopping) {
+                await sleep(1000);
+            }
+        }
+    }
+};
+
+/*
+ * Stop accepting new messages and allow buffered work to finalize.
+ */
+export const stopDetectionConsumer = async () => {
+    if (stopping) {
+        return;
+    }
+
+    stopping = true;
+
+    if (recoveryTimer) {
+        clearInterval(recoveryTimer);
+    }
+
+    for (const timer of timers.values()) {
+        clearTimeout(timer);
+    }
+
+    timers.clear();
+
+    const requestIds = [...pendingMessages.keys()];
+
+    await Promise.allSettled(
+        requestIds.map((requestId) => finalizeDetection(requestId))
+    );
+
+    console.log("[THREAT] Consumer shutdown completed");
+};

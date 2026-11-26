@@ -1,3 +1,4 @@
+
 import dotenv from "dotenv";
 import { connectRedis } from "./config/redis.js";
 import {
@@ -7,15 +8,19 @@ import {
 
 dotenv.config();
 
-
 const startServer = async () => {
     await connectRedis();
-
     await initializeStream();
 
-    consumeTrafficEvents();
-
-    console.log("Event Service started successfully");
+    // Keep the consumer running and handle unexpected failures.
+    await consumeTrafficEvents();
 };
 
-startServer();
+startServer().catch((error) => {
+    console.error(
+        "[EVENT] Startup failed:",
+        error?.code || "EVENT_SERVICE_STARTUP_FAILED"
+    );
+
+    process.exitCode = 1;
+});

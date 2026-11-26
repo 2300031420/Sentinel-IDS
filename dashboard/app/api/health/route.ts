@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/requireAuth";
 import net from "node:net";
 
 export const dynamic = "force-dynamic";
@@ -113,7 +114,13 @@ const checkTcpService = (
   });
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Authenticate the dashboard user before checking health.
+  const auth = await requireAuth(request);
+   if (!auth.ok) {
+    return auth.response;
+  }
+
   const checkedAt = new Date().toISOString();
 
   const [

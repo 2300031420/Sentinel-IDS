@@ -79,7 +79,7 @@ io.use((socket, next) => {
     if (
         !Number.isFinite(tokenAge) ||
         tokenAge < 0 ||
-        tokenAge > 300_000
+        tokenAge > 60_000
     ) {
         console.warn(
             `[SECURITY] Expired Socket.IO authentication token`
@@ -87,6 +87,11 @@ io.use((socket, next) => {
 
         return next(new Error("Authentication token expired"));
     }
+    if (!process.env.ALERT_API_KEY) {
+    console.error("[SECURITY] ALERT_API_KEY is not configured");
+    return next(new Error("Socket authentication unavailable"));
+}
+
 
     const expectedSignature = crypto
         .createHmac("sha256", process.env.ALERT_API_KEY)
